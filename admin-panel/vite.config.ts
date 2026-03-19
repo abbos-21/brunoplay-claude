@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
       },
+      allowedHosts: ['brunoplay-claude.duckdns.org'],
     },
   };
 });
