@@ -6,10 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
-    base: '/admin/', // 👈 THIS is the key line
-
     plugins: [react(), tailwindcss()],
-
     server: {
       proxy: {
         '/api': {
