@@ -1,0 +1,273 @@
+Build a complete mobile-only Telegram Mini App game UI called "Bruno's Fishing Adventure". This is a tap-to-earn fishing game with mini-games, card upgrades, and crypto withdrawal. The design should feel premium, playful, and game-like — think Hamster Kombat or Notcoin but with a fishing/ocean theme. Use a dark navy-to-deep-blue gradient background throughout, with golden/amber accents for coins, cyan/electric-blue for stars (premium currency), and soft white text. All screens are mobile-only (375px width, full viewport height). Use rounded cards, subtle glassmorphism, and smooth micro-interactions.
+
+=== COLOR PALETTE ===
+- Background: dark navy gradient (#0a1628 → #132042)
+- Cards/Surfaces: semi-transparent dark (#1a2744 with 80% opacity, glass blur)
+- Primary accent: golden amber (#f5a623) for coins and CTAs
+- Secondary accent: cyan blue (#00d4ff) for stars and premium elements
+- Success: emerald (#10b981)
+- Danger: coral red (#ef4444)
+- Text primary: white (#ffffff)
+- Text secondary: muted blue-gray (#8b9dc3)
+- Tab bar active: golden amber, inactive: muted gray
+
+=== GLOBAL LAYOUT ===
+Every screen shares:
+- Top bar: user level badge (left), coin counter with coin icon (center-left), star counter with star icon (center-right), user avatar circle (right)
+- Bottom tab bar with 5 tabs: Home (fish icon), Games (gamepad icon), Tasks (checklist icon), Friends (users icon), Wallet (wallet icon)
+- The currently active tab is highlighted with the golden accent color
+- Safe area padding for iOS notch and bottom bar
+
+=== SCREEN 1: HOME (Fishing) — Main Screen ===
+The centerpiece of the app. Shows a large circular fish tank/aquarium illustration in the center (60% of screen height). Inside the tank:
+- Animated water fill level representing coins in tank (e.g., 847/1,000 coins)
+- Small animated fish swimming around
+- "Mining rate: 0.0278/s" label below the tank in cyan
+- If a booster is active, show a glowing "1.5x" badge on the tank with a countdown timer
+
+Below the tank:
+- Large rounded "Collect" button (golden, full width, prominent) when tank has coins
+- OR "Start Fishing" button (blue) when not fishing
+- If fishing is active, show a subtle timer: "Fishing... 45:23 remaining"
+- If AUTO_MINING booster active, show a small "Auto" badge next to the timer
+
+Above the tank (below top bar):
+- Horizontal scrollable cards row showing:
+  - "Daily Combo" card (small, with grid icon, shows "Play" or "Done" status)
+  - "Daily Reward" card (small, with calendar icon, shows streak day number, "Claim" badge if available)
+  - "Boosters" card (small, with rocket icon, shows active booster count or "Buy")
+  - "Shop" card (small, with upgrade icon)
+
+=== SCREEN 2: SHOP (Card Upgrades) — Accessed from Home ===
+Two large upgrade cards displayed vertically:
+
+Card 1 — "Coin Capacity" (Tank Size):
+- Icon: fish tank/aquarium
+- Current: "Level 3 — 350 coins capacity"
+- Next: "Level 4 — 500 coins capacity"
+- Cost shown in coins
+- Requirements list (each with green check or gray lock): "Reach Level 3 ✓", "5 Referrals ✗"
+- "Upgrade" button (golden, or grayed out if locked)
+
+Card 2 — "Mining Rate" (Fishing Speed):
+- Icon: fishing rod with speed lines
+- Current: "Level 3 — 0.097/s"
+- Next: "Level 4 — 0.139/s"
+- Same layout as above
+
+Below cards:
+- "Your Level: 3" progress indicator showing level determined by min(card1, card2)
+- Level progress bar from 1 to 13
+
+=== SCREEN 3: BOOSTERS — Accessed from Home ===
+Two booster cards:
+
+Booster 1 — "Mining Boost 1.5x":
+- Icon: lightning bolt
+- "10 ⭐ — 60 minutes"
+- Description: "Increases mining speed by 50%"
+- "Activate" button (cyan) or "Active: 42:15 remaining" countdown if active
+
+Booster 2 — "Auto Mining":
+- Icon: robot/automation
+- "20 ⭐ — 24 hours"
+- Description: "Automatically restarts fishing after collection"
+- Same active/inactive state
+
+=== SCREEN 4: DAILY COMBO — Accessed from Home ===
+Title: "Daily Combo" with countdown "Resets in 14:23:45"
+
+Display 8 fishing-themed items in a 4x2 grid: hat, fishing rod, fish, bucket, boots, boat, bag, net — each as a rounded square card with an illustration and label.
+
+Below the grid:
+- 4 empty selection slots in a horizontal row ("Select 4 items in correct order")
+- As user taps items, they fill the slots (with tap animation)
+- Tapping a filled slot removes it
+
+Submit button at bottom.
+
+After submission: overlay showing result — "3/4 Correct! +75 coins" with the correct answer revealed (correct items highlighted in green, wrong in red).
+
+=== SCREEN 5: DAILY REWARD — Accessed from Home ===
+Title: "Login Streak" with current streak day highlighted
+
+10-day calendar strip displayed as a horizontal scrollable row of circles:
+- Each circle shows the day number (1-10) and reward amount below
+- Past days: filled with green check
+- Today: glowing golden border, larger, with "Claim" label
+- Future days: dimmed/locked appearance
+
+Rewards: Day 1: 5, Day 2: 10, Day 3: 15, Day 4: 25, Day 5: 35, Day 6: 50, Day 7: 65, Day 8: 80, Day 9: 100, Day 10: 150
+
+"Claim Reward" button at bottom (golden, pulsing animation if claimable)
+
+After Day 10, cycle repeats (show "Cycle 2" indicator)
+
+=== SCREEN 6: GAMES TAB ===
+Three game cards displayed as large, visually rich horizontal cards stacked vertically:
+
+Game 1 — "Lucky Spin":
+- Colorful wheel illustration
+- "Win up to 25,000 coins!"
+- "From 1 ⭐" cost label
+- Tap to enter
+
+Game 2 — "Roulette":
+- Casino roulette wheel illustration
+- "Spin for prizes!"
+- "5 ⭐ per spin"
+- Tap to enter
+
+Game 3 — "Bruno's Ride":
+- Cartoon character on a surfboard/boat illustration
+- "Endless runner — earn coins!"
+- "1 ⭐ to play"
+- Tap to enter
+
+Below games:
+- "Tournament" banner card if active tournament exists:
+  - Tournament name, time remaining
+  - "Your Rank: #42"
+  - "View Leaderboard" button
+
+=== SCREEN 7: SPIN GAME — Accessed from Games ===
+Top: Star balance display
+
+5 tier selector pills in a horizontal row:
+- Tier 1 (1⭐), Tier 2 (3⭐), Tier 3 (5⭐), Tier 4 (10⭐), Tier 5 (25⭐)
+- Selected tier highlighted with glow effect
+
+Center: Large animated spin wheel showing prize segments with colors (coins in gold, stars in cyan, gifts in purple)
+
+Below wheel:
+- Multiplier selector: "1x", "3x", "5x", "10x" toggle buttons
+- Total cost: "5 ⭐" (tier cost × multiplier)
+- "SPIN!" button (large, golden, prominent)
+
+Bottom: Live wins ticker — horizontal auto-scrolling feed showing recent wins:
+- "@username won 500 coins!", "@player2 won 10 ⭐!" etc.
+
+=== SCREEN 8: ROULETTE GAME — Accessed from Games ===
+Top: Star balance, cost "5 ⭐ per spin"
+
+Center: Large roulette wheel with colored segments showing prizes:
+- Gold segments: 50, 100, 250, 500 coins
+- Cyan segment: 10 stars
+- Purple segment: Gift
+
+"SPIN" button below wheel (large, rounded, golden)
+
+Result overlay: animated prize reveal with confetti effect
+
+Bottom: Live wins ticker (same style as spin)
+
+=== SCREEN 9: BRUNO'S RIDE — Accessed from Games ===
+Pre-game screen:
+- Character illustration (Bruno the fisherman on a surfboard)
+- "Cost: 1 ⭐"
+- Current star balance
+- "START" button
+
+During game:
+- Full-screen side-scrolling runner
+- Coin counter in top-right
+- Score in top-left
+- Obstacles to dodge (rocks, waves, sea creatures)
+- Coins to collect along the path
+- Progressive difficulty
+
+End screen:
+- "Game Over!"
+- Score display
+- Coins earned: "+234 coins"
+- "Play Again (1⭐)" and "Back" buttons
+
+=== SCREEN 10: TOURNAMENT/LEADERBOARD — Accessed from Games ===
+Header: Tournament name, time remaining countdown
+
+Podium display: Top 3 players with medal icons (gold, silver, bronze) showing username and stars spent
+
+Scrollable list below podium:
+- Rank number, user avatar, username, stars spent
+- Current user's row highlighted in golden border
+- Paginated (load more on scroll)
+
+Prize distribution shown in collapsible section: "1st: 1000 coins, 2nd: 500 coins, 3rd: 250 coins"
+
+=== SCREEN 11: TASKS TAB ===
+Two sections with toggle pills: "Main Tasks" | "Other Tasks"
+
+Each task as a card:
+- Task icon (channel icon or users icon)
+- Title: "Join @BrunoFishing channel"
+- Reward: "+500 coins" in golden text
+- Progress (for invite tasks): "3/5 friends invited" with progress bar
+- Action button: "Go" (opens channel) or "Check" (verifies) or "Claimed ✓" (completed, grayed)
+
+Completed tasks shown at bottom with checkmark, semi-transparent
+
+=== SCREEN 12: FRIENDS TAB ===
+Top section — stats row:
+- "Total Friends: 12"
+- "Total Earnings: 15,000 coins"
+
+Referral link section:
+- Displayed link in a rounded input-style box
+- "Copy Link" button (cyan)
+- "Share" button (golden, opens Telegram share)
+
+Reward tiers table:
+- Collapsible section "Referral Rewards"
+- Shows level → reward mapping as a clean table:
+  - "Friend reaches Level 2 → 200 coins"
+  - "Friend reaches Level 3 → 500 coins"
+  - ... up to Level 13
+
+Friends list (scrollable):
+- Each row: user avatar, name, level badge, coins earned from this friend
+- Paginated
+
+=== SCREEN 13: WALLET TAB ===
+Top: Balance display
+- Large coin amount with coin icon
+- Star balance below with star icon
+
+Two main sections:
+
+Section 1 — "Withdraw Coins":
+- Info: "Rate: 100,000 coins = 1 TON"
+- Amount input field (with max button)
+- Min/max labels: "Min: 100,000 — Max: 1,000,000"
+- TON address input field
+- Fee info: "Fee: 0.05 TON"
+- "You'll receive: X.XX TON" calculated preview
+- "Withdraw" button (golden)
+
+Section 2 — "Buy Stars":
+- Current balance
+- "Buy via Telegram" button (blue, opens invoice)
+- OR "Top up with TON" expandable section:
+  - TON amount input
+  - "Rate: 1 TON = 110 ⭐ (100 + 10% bonus)"
+  - "Convert" button
+
+Section 3 — "History":
+- Tab pills: "Withdrawals" | "Star Purchases"
+- List of transactions with status badges:
+  - Pending (yellow), Processing (blue), Completed (green), Failed (red)
+  - Amount, date, status
+
+=== DESIGN PRINCIPLES ===
+- Every interactive element should have visible touch feedback
+- Use skeleton loading states for data-heavy screens
+- Coin and star amounts should use locale-formatted numbers (1,234,567)
+- All modals slide up from bottom (bottom sheet style)
+- Success states use confetti/particle animations
+- Errors shown as red toast notifications at top
+- Transitions between screens use horizontal slide animations
+- The overall feel should be premium mobile gaming — not a web app
+- Support both English and Russian languages (RTL not needed, just text swapping)
+- All icons should use a consistent outline/filled style (Lucide or similar)
+- Glassmorphism cards: semi-transparent backgrounds with subtle blur
+- Rounded corners everywhere (16px for cards, 12px for buttons, 999px for pills)
+- Font: Inter or system font, bold headings, medium body text

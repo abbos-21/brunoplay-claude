@@ -1,0 +1,15 @@
+export { default as OfficeImage } from './office.png';
+export { default as ShopImage } from './shop.png';
+export { default as GamesImage } from './games.png';
+export { default as TasksImage } from './tasks.png';
+export { default as FriendsImage } from './friends.png';
+export { default as CoinImage } from './coin.png';
+export { default as EnergyImage } from './energy.png';
+export { default as FishingImage } from './fishing.png';
+export { default as CalendarImage } from './calendar.png';
+export { default as PuzzleImage } from './puzzle.png';
+export { default as MiningRateImage } from './mining-rate.png';
+export { default as CoinCapacityImage } from './coin-capacity.png';
+export { default as EnergyRateImage } from './energy-rate.png';
+export { default as AutoMiningImage } from './auto-mining.png';
+export { default as BoosterImage } from './booster.png';

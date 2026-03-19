@@ -1,0 +1,473 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ───
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum GameSessionStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  FLAGGED_CHEAT
+  EXPIRED
+}
+
+enum BoosterType {
+  MINING_BOOST_1_5X
+  AUTO_MINING
+}
+
+enum CardName {
+  COIN_CAPACITY
+  MINING_RATE
+}
+
+enum ActionType {
+  FISHING_START
+  FISHING_COLLECT
+  COINS_EARNED
+  UPGRADE_PURCHASED
+  BOOSTER_ACTIVATED
+  WITHDRAWAL_REQUESTED
+  WITHDRAWAL_COMPLETED
+  WITHDRAWAL_FAILED
+  SPIN_PLAYED
+  ROULETTE_PLAYED
+  BRUNOS_RIDE_STARTED
+  BRUNOS_RIDE_COMPLETED
+  BRUNOS_RIDE_CHEATED
+  TASK_COMPLETED
+  REFERRAL_REWARD
+  DAILY_COMBO_SUBMITTED
+  DAILY_LOGIN_CLAIMED
+  STARS_PURCHASED
+  STARS_TOPPED_UP
+  ADMIN_COIN_ADJUSTMENT
+  ADMIN_BLOCK_USER
+  ADMIN_UNBLOCK_USER
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  MODERATOR
+}
+
+enum TaskCategory {
+  MAIN
+  OTHER
+}
+
+enum TaskType {
+  CHANNEL_JOIN
+  INVITE_FRIENDS
+}
+
+enum SpinTier {
+  TIER_1
+  TIER_2
+  TIER_3
+  TIER_4
+  TIER_5
+}
+
+enum Language {
+  EN
+  RU
+}
+
+// ─── MODELS ───
+
+model User {
+  id               Int       @id @default(autoincrement())
+  telegramId       String    @unique
+  username         String    @default("")
+  firstName        String    @default("")
+  lastName         String    @default("")
+  languageCode     String    @default("en")
+  language         Language  @default(EN)
+  isBot            Boolean   @default(false)
+  isBlocked        Boolean   @default(false)
+
+  // Economy
+  coins            Float     @default(0)
+  totalCoinsEarned Float     @default(0)
+  starsBalance     Int       @default(0)
+
+  // Level
+  level            Int       @default(1)
+
+  // Fishing State
+  isFishing        Boolean   @default(false)
+  fishingStartedAt DateTime?
+  tankCoins        Float     @default(0)
+  tankCapacity     Float     @default(100)
+  miningRate       Float     @default(0.0278)
+
+  // Card Levels
+  coinCapacityLevel Int      @default(1)
+  miningRateLevel   Int      @default(1)
+
+  // Daily Systems
+  lastLoginDate    DateTime?
+  loginStreak      Int       @default(0)
+  lastComboDate    DateTime?
+  lastComboResult  Int?
+
+  // Referral
+  referredById     Int?
+  referredBy       User?     @relation("Referrals", fields: [referredById], references: [id])
+  referrals        User[]    @relation("Referrals")
+  rewardedLevels   String    @default("[]")
+  referralEarnings Float     @default(0)
+
+  // Settings
+  musicEnabled     Boolean   @default(true)
+
+  // Timestamps
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  withdrawals        Withdrawal[]
+  starsTransactions  StarsTransaction[]
+  actions            Action[]
+  activeBoosters     ActiveBooster[]
+  spinSessions       SpinSession[]
+  rouletteSessions   RouletteSession[]
+  rideSessions       RideSession[]
+  taskCompletions    TaskCompletion[]
+  subscriptions      UserSubscription[]
+  tournamentEntries  TournamentEntry[]
+
+  @@index([telegramId])
+  @@index([referredById])
+  @@index([level, coins])
+  @@index([isBlocked])
+  @@index([createdAt])
+}
+
+model UserSubscription {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  channelUsername String
+  rewardedAt     DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, channelUsername])
+  @@index([userId])
+}
+
+model Withdrawal {
+  id            Int              @id @default(autoincrement())
+  userId        Int
+  amountCoins   Float
+  amountTon     Float
+  ip            String
+  targetAddress String
+  status        WithdrawalStatus @default(PENDING)
+  txHash        String?
+  errorMessage  String?
+  processedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  user          User             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model StarsTransaction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  amount    Int
+  source    String
+  comment   String   @default("")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model Action {
+  id     Int        @id @default(autoincrement())
+  userId Int
+  type   ActionType
+  ip     String     @default("")
+  time   DateTime   @default(now())
+  data   String     @default("{}")
+  user   User       @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, type])
+  @@index([time])
+}
+
+model ActiveBooster {
+  id          Int         @id @default(autoincrement())
+  userId      Int
+  type        BoosterType
+  multiplier  Float       @default(1.5)
+  activatedAt DateTime    @default(now())
+  expiresAt   DateTime
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, expiresAt])
+}
+
+// ─── SHOP: CARD UPGRADE REQUIREMENTS ───
+
+model CardUpgradeRequirement {
+  id               Int      @id @default(autoincrement())
+  cardName         CardName
+  level            Int
+  description      String
+  requirementType  String
+  requirementValue String
+  createdAt        DateTime @default(now())
+
+  @@unique([cardName, level])
+  @@index([cardName])
+}
+
+// ─── GAMES ───
+
+model SpinSession {
+  id         String   @id @default(uuid())
+  userId     Int
+  tier       SpinTier
+  costStars  Int
+  spinsCount Int
+  results    Json
+  totalWon   Json
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model RouletteSession {
+  id        String   @id @default(uuid())
+  userId    Int
+  costStars Int
+  result    Json
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model RideSession {
+  id          String            @id @default(uuid())
+  userId      Int
+  costStars   Int
+  startTime   DateTime          @default(now())
+  endTime     DateTime?
+  score       Int               @default(0)
+  coinsEarned Int               @default(0)
+  status      GameSessionStatus @default(ACTIVE)
+  expiresAt   DateTime
+  createdAt   DateTime          @default(now())
+  user        User              @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+// ─── TASKS ───
+
+model Task {
+  id              Int          @id @default(autoincrement())
+  category        TaskCategory
+  type            TaskType
+  title           String
+  description     String       @default("")
+  channelUsername  String?
+  requiredInvites Int?
+  rewardCoins     Int
+  isActive        Boolean      @default(true)
+  sortOrder       Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  completions     TaskCompletion[]
+
+  @@index([category, isActive])
+  @@index([type])
+}
+
+model TaskCompletion {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  taskId      Int
+  completedAt DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+  task        Task     @relation(fields: [taskId], references: [id])
+
+  @@unique([userId, taskId])
+  @@index([userId])
+}
+
+// ─── DAILY COMBO ───
+
+model DailyCombo {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @unique
+  correctItems Json
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
+// ─── TOURNAMENTS ───
+
+model Tournament {
+  id          Int               @id @default(autoincrement())
+  name        String
+  description String            @default("")
+  startAt     DateTime
+  endAt       DateTime
+  isActive    Boolean           @default(true)
+  rewards     Json
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  entries     TournamentEntry[]
+
+  @@index([isActive])
+  @@index([startAt, endAt])
+}
+
+model TournamentEntry {
+  id            Int        @id @default(autoincrement())
+  userId        Int
+  tournamentId  Int
+  starsSpent    Int        @default(0)
+  rank          Int?
+  rewardClaimed Boolean    @default(false)
+  user          User       @relation(fields: [userId], references: [id])
+  tournament    Tournament @relation(fields: [tournamentId], references: [id])
+
+  @@unique([userId, tournamentId])
+  @@index([tournamentId, starsSpent])
+  @@index([userId])
+}
+
+// ─── LIVE WINS ───
+
+model LiveWin {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  username         String   @default("")
+  firstName        String   @default("")
+  gameType         String
+  prizeName        String
+  prizeValue       String
+  profitMultiplier Float    @default(1)
+  createdAt        DateTime @default(now())
+
+  @@index([gameType, createdAt])
+  @@index([createdAt])
+}
+
+// ─── SYSTEM ───
+
+model Settings {
+  id                     Int   @id @default(1)
+
+  // Fishing
+  fishingDurationSeconds Int   @default(3600)
+
+  // Card Upgrades
+  cardUpgradeValues      Json
+
+  // Boosters
+  boosterPrices          Json
+
+  // Spin Game
+  spinTiers              Json
+
+  // Roulette
+  rouletteCostStars      Int   @default(5)
+  roulettePrizes         Json
+
+  // Bruno's Ride
+  rideCostStars          Int   @default(1)
+  rideMaxCoinsPerSecond  Int   @default(8)
+
+  // Daily Combo
+  comboRewards           Json
+
+  // Daily Activity
+  loginStreakRewards     Json
+
+  // Withdrawal
+  coinToTonRate          Int   @default(100000)
+  minimumCoinWithdrawal  Int   @default(100000)
+  maximumCoinWithdrawal  Int   @default(1000000)
+  withdrawalFeeTon       Float @default(0.05)
+
+  // Referral Rewards
+  referralRewards        Json
+
+  // Stars Top-Up
+  tonToStarsRate         Float @default(1.0)
+  tonToStarsBonusPercent Int   @default(10)
+
+  updatedAt              DateTime @updatedAt
+}
+
+model Season {
+  id    Int      @id @default(autoincrement())
+  name  String   @unique
+  start DateTime
+  end   DateTime
+}
+
+model JobState {
+  name      String   @id
+  lastRunAt DateTime
+  nextRunAt DateTime
+}
+
+model Admin {
+  id        Int            @id @default(autoincrement())
+  username  String         @unique
+  password  String
+  role      AdminRole      @default(ADMIN)
+  createdAt DateTime       @default(now())
+  auditLogs AdminAuditLog[]
+}
+
+model AdminAuditLog {
+  id         Int      @id @default(autoincrement())
+  adminId    Int
+  action     String
+  targetType String?
+  targetId   String?
+  details    Json?
+  ip         String
+  createdAt  DateTime @default(now())
+  admin      Admin    @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}

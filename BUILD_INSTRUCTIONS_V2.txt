@@ -1,0 +1,2413 @@
+================================================================================
+  BUILD INSTRUCTIONS V2 FOR CLAUDE OPUS 4.6
+  "Bruno's Fishing Adventure" — Telegram Mini-App Game Backend
+================================================================================
+
+You are building a production-grade backend for a Telegram Mini-App fishing
+game called "Bruno's Fishing Adventure." The game character is Bruno — a
+bearded fisherman who earns coins by fishing in a river, plays mini-games,
+completes tasks, and invites friends.
+
+This document is your SINGLE SOURCE OF TRUTH. Implement every feature, formula,
+constant, endpoint, and rule described here. Do not skip, simplify, or
+improvise any mechanic. If something is ambiguous, choose the interpretation
+that produces the more robust and secure system.
+
+Read this ENTIRE document before writing any code.
+
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  SECTION  1  — Tech Stack
+  SECTION  2  — Project Architecture
+  SECTION  3  — Database Schema (Prisma)
+  SECTION  4  — Authentication & Authorization
+  SECTION  5  — Fishing System (Core Gameplay)
+  SECTION  6  — Coin & Withdrawal System
+  SECTION  7  — Level System
+  SECTION  8  — Shop Section (Cards & Boosters)
+  SECTION  9  — Games Section (Spin, Roulette, Bruno's Ride)
+  SECTION 10  — Tasks Section
+  SECTION 11  — Friends Section (Referral System)
+  SECTION 12  — Daily Combo System
+  SECTION 13  — Daily Activity (Login Streak)
+  SECTION 14  — Settings & User Profile
+  SECTION 15  — Telegram Bot
+  SECTION 16  — Stars & Payment System
+  SECTION 17  — Tournament System
+  SECTION 18  — Admin Panel API
+  SECTION 19  — Background Jobs & Scheduling
+  SECTION 20  — Security & Hardening
+  SECTION 21  — Testing Requirements
+  SECTION 22  — API Documentation
+  SECTION 23  — Seed Script
+  SECTION 24  — Configuration Files
+  SECTION 25  — Startup & Graceful Shutdown
+  SECTION 26  — Implementation Order
+  SECTION 27  — Quality Checklist
+
+
+================================================================================
+SECTION 1: TECH STACK (MANDATORY)
+================================================================================
+
+Runtime & Language:
+  - Node.js 20+ LTS
+  - TypeScript 5.x with strict mode enabled
+  - ES Modules (type: "module" in package.json)
+
+Framework:
+  - Fastify 5.x (NOT Express)
+    Why: Built-in schema validation, logging, plugin system, 2–5x faster than
+    Express, native TypeScript support, built-in async error handling.
+  - @fastify/cors — CORS middleware
+  - @fastify/helmet — Security headers
+  - @fastify/rate-limit — Rate limiting
+  - @fastify/swagger + @fastify/swagger-ui — Auto-generated API docs
+  - @fastify/websocket — For live wins feed (Spin/Roulette)
+
+ORM & Database:
+  - Prisma (latest stable version — check npm at build time)
+    IMPORTANT: Do NOT pin to Prisma 6. Use whatever is the latest stable
+    release on npm. If that is Prisma 7.x or higher, use it. Ensure all
+    Prisma features you use are compatible with the version you install.
+  - PostgreSQL 16+
+  - Use Prisma enums, composite indexes, and relation constraints properly.
+
+Bot Framework:
+  - grammY 1.x (Telegram Bot API)
+
+Authentication:
+  - jsonwebtoken — JWT creation and verification
+  - bcrypt — Admin password hashing
+  - @tma.js/init-data-node — Telegram Mini App init data validation
+
+Blockchain:
+  - @ton/ton, @ton/core, @ton/crypto — TON network integration
+
+Validation:
+  - zod — Runtime schema validation for ALL request inputs
+
+Scheduling:
+  - node-cron — Cron job scheduling
+
+Queue:
+  - p-queue — Async operation queuing (withdrawals, broadcasts)
+
+Logging:
+  - pino (built into Fastify) — Structured JSON logging
+
+Testing:
+  - vitest — Unit and integration testing
+  - supertest or light-my-request — HTTP endpoint testing
+
+Dev Tooling:
+  - tsx — TypeScript execution for development
+  - eslint + @typescript-eslint — Linting
+  - prettier — Code formatting
+
+
+================================================================================
+SECTION 2: PROJECT ARCHITECTURE
+================================================================================
+
+ARCHITECTURAL RULES (NON-NEGOTIABLE):
+
+  RULE 1 — THIN ROUTES, FAT SERVICES
+    Route files ONLY do: parse/validate request → call service → return response.
+    Route files NEVER contain: database queries, business logic, calculations,
+    or side effects.
+
+  RULE 2 — PURE COMPUTATION FUNCTIONS
+    All mathematical/deterministic logic lives in pure function files
+    (*.engine.ts) with ZERO database or I/O imports. These must be 100%
+    unit-testable.
+
+  RULE 3 — TRANSACTIONS FOR MULTI-STEP MUTATIONS
+    Any operation with 2+ database writes MUST use prisma.$transaction().
+
+  RULE 4 — CENTRALIZED ERROR HANDLING
+    Custom error classes in lib/errors.ts. Global Fastify error handler returns
+    consistent JSON: { success: false, error: { code, message } }.
+
+  RULE 5 — EVERY ENDPOINT VALIDATES INPUT
+    Zod schemas for every request body, URL param, and query param.
+
+  RULE 6 — SETTINGS ARE DYNAMIC, NOT HARDCODED
+    All tunable game parameters load from the Settings DB table at runtime
+    with 60-second in-memory cache. Hardcode ONLY structural invariants
+    (FISHING_DURATION_MS = 3_600_000, MAX_LEVEL = 13, COMBO_ITEM_COUNT = 8,
+    COMBO_PICK_COUNT = 4, JWT_EXPIRY = "7d").
+
+--------------------------------------------------------------------------------
+2.1  DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+src/
+├── app.ts                          # Fastify app creation + plugin registration
+├── server.ts                       # Server startup, graceful shutdown
+├── prisma.ts                       # Prisma client singleton + shutdown hook
+│
+├── config/
+│   ├── env.ts                      # Zod-validated environment variables
+│   └── constants.ts                # Structural invariants only
+│
+├── plugins/
+│   ├── auth.ts                     # Fastify plugin: JWT user verification
+│   ├── adminAuth.ts                # Fastify plugin: Admin JWT + role check
+│   └── settings.ts                 # Fastify plugin: SettingsService w/ cache
+│
+├── modules/
+│   ├── auth/
+│   │   ├── auth.routes.ts
+│   │   ├── auth.service.ts
+│   │   ├── auth.schema.ts
+│   │   └── auth.test.ts
+│   │
+│   ├── fishing/
+│   │   ├── fishing.routes.ts       # Start fishing, collect, sync, status
+│   │   ├── fishing.service.ts      # Fishing session orchestration
+│   │   ├── fishing.engine.ts       # Pure: calculateTankFill, canStartFishing
+│   │   ├── fishing.schema.ts
+│   │   └── fishing.test.ts
+│   │
+│   ├── user/
+│   │   ├── user.routes.ts          # Profile, settings, language
+│   │   ├── user.service.ts
+│   │   ├── user.schema.ts
+│   │   └── user.test.ts
+│   │
+│   ├── shop/
+│   │   ├── cards/
+│   │   │   ├── cards.routes.ts     # Card upgrade endpoints
+│   │   │   ├── cards.service.ts    # Upgrade logic, requirement checks
+│   │   │   ├── cards.engine.ts     # Pure: calculateUpgradeValues
+│   │   │   ├── cards.schema.ts
+│   │   │   └── cards.test.ts
+│   │   └── boosters/
+│   │       ├── boosters.routes.ts  # Booster purchase + activation
+│   │       ├── boosters.service.ts
+│   │       ├── boosters.schema.ts
+│   │       └── boosters.test.ts
+│   │
+│   ├── games/
+│   │   ├── spin/
+│   │   │   ├── spin.routes.ts
+│   │   │   ├── spin.service.ts
+│   │   │   ├── spin.engine.ts      # Pure: weighted prize selection
+│   │   │   ├── spin.schema.ts
+│   │   │   └── spin.test.ts
+│   │   ├── roulette/
+│   │   │   ├── roulette.routes.ts
+│   │   │   ├── roulette.service.ts
+│   │   │   ├── roulette.engine.ts
+│   │   │   ├── roulette.schema.ts
+│   │   │   └── roulette.test.ts
+│   │   └── brunos-ride/
+│   │       ├── brunos-ride.routes.ts
+│   │       ├── brunos-ride.service.ts
+│   │       ├── brunos-ride.schema.ts
+│   │       └── brunos-ride.test.ts
+│   │
+│   ├── tasks/
+│   │   ├── tasks.routes.ts         # Main tasks + other tasks
+│   │   ├── tasks.service.ts
+│   │   ├── tasks.schema.ts
+│   │   └── tasks.test.ts
+│   │
+│   ├── friends/
+│   │   ├── friends.routes.ts       # Referral link, list, stats
+│   │   ├── friends.service.ts
+│   │   ├── friends.schema.ts
+│   │   └── friends.test.ts
+│   │
+│   ├── daily-combo/
+│   │   ├── daily-combo.routes.ts   # Get today's combo, submit answer
+│   │   ├── daily-combo.service.ts
+│   │   ├── daily-combo.engine.ts   # Pure: evaluateComboAnswer
+│   │   ├── daily-combo.schema.ts
+│   │   └── daily-combo.test.ts
+│   │
+│   ├── daily-activity/
+│   │   ├── daily-activity.routes.ts # Claim daily reward, get streak
+│   │   ├── daily-activity.service.ts
+│   │   ├── daily-activity.schema.ts
+│   │   └── daily-activity.test.ts
+│   │
+│   ├── withdrawals/
+│   │   ├── withdrawals.routes.ts
+│   │   ├── withdrawals.service.ts
+│   │   ├── withdrawals.schema.ts
+│   │   └── withdrawals.test.ts
+│   │
+│   ├── stars/
+│   │   ├── stars.routes.ts         # Stars balance, top-up, invoices
+│   │   ├── stars.service.ts
+│   │   ├── stars.schema.ts
+│   │   └── stars.test.ts
+│   │
+│   ├── leaderboard/
+│   │   ├── leaderboard.routes.ts   # Tournament leaderboard
+│   │   ├── leaderboard.service.ts
+│   │   ├── leaderboard.schema.ts
+│   │   └── leaderboard.test.ts
+│   │
+│   └── admin/
+│       ├── admin-auth.routes.ts
+│       ├── admin-auth.service.ts
+│       ├── admin-users.routes.ts
+│       ├── admin-users.service.ts
+│       ├── admin-game.routes.ts    # Settings CRUD
+│       ├── admin-game.service.ts
+│       ├── admin-economy.routes.ts # Withdrawals, coin adjustments
+│       ├── admin-economy.service.ts
+│       ├── admin-content.routes.ts # Tasks, channels, seasons, combos, tournaments
+│       ├── admin-content.service.ts
+│       ├── admin-analytics.routes.ts
+│       ├── admin-analytics.service.ts
+│       ├── admin.schema.ts
+│       └── admin.test.ts
+│
+├── bot/
+│   ├── bot.ts                      # grammY bot setup
+│   ├── commands.ts                 # /start, /help handlers
+│   ├── payments.ts                 # Pre-checkout + successful payment
+│   └── helpers.ts                  # Subscription checks, broadcasts
+│
+├── jobs/
+│   ├── scheduler.ts                # Cron registration
+│   ├── dailyRefill.job.ts          # Reset daily combo, login streak window
+│   ├── sessionCleanup.job.ts       # Expire stale game sessions
+│   └── tournamentEnd.job.ts        # Finalize ended tournaments
+│
+├── services/
+│   └── tonService.ts               # TON blockchain transaction sending
+│
+├── lib/
+│   ├── errors.ts                   # AppError, NotFoundError, etc.
+│   ├── levelUtils.ts               # calculateLevel() pure function
+│   ├── referralReward.ts           # Referral reward calculation
+│   ├── selectPrize.ts              # Generic weighted random selection
+│   ├── ip.ts                       # IP extraction utility
+│   └── telegram.ts                 # Telegram auth verification wrapper
+│
+├── types/
+│   └── index.ts                    # Shared type definitions
+│
+└── __tests__/
+    ├── setup.ts                    # Test DB setup, Prisma test client
+    └── helpers.ts                  # Factory functions for test data
+
+
+================================================================================
+SECTION 3: DATABASE SCHEMA (PRISMA)
+================================================================================
+
+Below is the COMPLETE Prisma schema. Implement it exactly. Use the latest
+stable Prisma version. All models, enums, fields, indexes, and relations
+listed here are REQUIRED.
+
+--------------------------------------------------------------------------------
+3.1  ENUMS
+--------------------------------------------------------------------------------
+
+  enum WithdrawalStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+    CANCELLED
+  }
+
+  enum GameSessionStatus {
+    ACTIVE
+    COMPLETED
+    FAILED
+    FLAGGED_CHEAT
+    EXPIRED
+  }
+
+  enum BoosterType {
+    MINING_BOOST_1_5X
+    AUTO_MINING
+  }
+
+  enum CardName {
+    COIN_CAPACITY
+    MINING_RATE
+  }
+
+  enum ActionType {
+    FISHING_START
+    FISHING_COLLECT
+    COINS_EARNED
+    UPGRADE_PURCHASED
+    BOOSTER_ACTIVATED
+    WITHDRAWAL_REQUESTED
+    WITHDRAWAL_COMPLETED
+    WITHDRAWAL_FAILED
+    SPIN_PLAYED
+    ROULETTE_PLAYED
+    BRUNOS_RIDE_STARTED
+    BRUNOS_RIDE_COMPLETED
+    BRUNOS_RIDE_CHEATED
+    TASK_COMPLETED
+    REFERRAL_REWARD
+    DAILY_COMBO_SUBMITTED
+    DAILY_LOGIN_CLAIMED
+    STARS_PURCHASED
+    STARS_TOPPED_UP
+    ADMIN_COIN_ADJUSTMENT
+    ADMIN_BLOCK_USER
+    ADMIN_UNBLOCK_USER
+  }
+
+  enum AdminRole {
+    SUPER_ADMIN
+    ADMIN
+    MODERATOR
+  }
+
+  enum TaskCategory {
+    MAIN
+    OTHER
+  }
+
+  enum TaskType {
+    CHANNEL_JOIN
+    INVITE_FRIENDS
+  }
+
+  enum SpinTier {
+    TIER_1
+    TIER_2
+    TIER_3
+    TIER_4
+    TIER_5
+  }
+
+  enum Language {
+    EN
+    RU
+  }
+
+--------------------------------------------------------------------------------
+3.2  MODELS
+--------------------------------------------------------------------------------
+
+  model User {
+    id                  Int       @id @default(autoincrement())
+    telegramId          String    @unique
+    username            String    @default("")
+    firstName           String    @default("")
+    lastName            String    @default("")
+    languageCode        String    @default("en")
+    language            Language  @default(EN)
+    isBot               Boolean   @default(false)
+    isBlocked           Boolean   @default(false)
+
+    // Economy
+    coins               Float     @default(0)       // Main balance
+    totalCoinsEarned    Float     @default(0)       // Lifetime total
+    starsBalance        Int       @default(0)       // Telegram Stars in-game balance
+
+    // Level
+    level               Int       @default(1)       // 1–13
+
+    // Fishing State
+    isFishing           Boolean   @default(false)
+    fishingStartedAt    DateTime?                   // When current session started
+    tankCoins           Float     @default(0)       // Coins in capacity tank
+    tankCapacity        Float     @default(100)     // Max tank capacity (from card upgrades)
+    miningRate          Float     @default(0.0278)  // Coins per second (100 coins / 3600 sec default)
+
+    // Card Levels
+    coinCapacityLevel   Int       @default(1)       // Coin Capacity card level
+    miningRateLevel     Int       @default(1)       // Mining Rate card level
+
+    // Daily Systems
+    lastLoginDate       DateTime?                   // Date of last daily claim
+    loginStreak         Int       @default(0)       // Current consecutive days
+    lastComboDate       DateTime?                   // Date of last combo attempt
+    lastComboResult     Int?                        // Number of correct items (0–4)
+
+    // Referral
+    referredById        Int?
+    referredBy          User?     @relation("Referrals", fields: [referredById], references: [id])
+    referrals           User[]    @relation("Referrals")
+    rewardedLevels      String    @default("[]")    // JSON array of levels already rewarded
+    referralEarnings    Float     @default(0)
+
+    // Settings
+    musicEnabled        Boolean   @default(true)
+
+    // Timestamps
+    lastLoginAt         DateTime?
+    createdAt           DateTime  @default(now())
+    updatedAt           DateTime  @updatedAt
+
+    // Relations
+    withdrawals         Withdrawal[]
+    starsTransactions   StarsTransaction[]
+    actions             Action[]
+    activeBoosters      ActiveBooster[]
+    spinSessions        SpinSession[]
+    rouletteSessions    RouletteSession[]
+    rideSessions        RideSession[]
+    taskCompletions     TaskCompletion[]
+    subscriptions       UserSubscription[]
+    tournamentEntries   TournamentEntry[]
+
+    @@index([telegramId])
+    @@index([referredById])
+    @@index([level, coins])
+    @@index([isBlocked])
+    @@index([createdAt])
+  }
+
+  model UserSubscription {
+    id              Int      @id @default(autoincrement())
+    userId          Int
+    channelUsername  String
+    rewardedAt      DateTime @default(now())
+    user            User     @relation(fields: [userId], references: [id])
+
+    @@unique([userId, channelUsername])
+    @@index([userId])
+  }
+
+  model Withdrawal {
+    id            Int              @id @default(autoincrement())
+    userId        Int
+    amountCoins   Float
+    amountTon     Float
+    ip            String
+    targetAddress String
+    status        WithdrawalStatus @default(PENDING)
+    txHash        String?
+    errorMessage  String?
+    processedAt   DateTime?
+    createdAt     DateTime         @default(now())
+    updatedAt     DateTime         @updatedAt
+    user          User             @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, createdAt])
+    @@index([status])
+  }
+
+  model StarsTransaction {
+    id        Int      @id @default(autoincrement())
+    userId    Int
+    amount    Int                    // Positive = credit, negative = debit
+    source    String                 // "telegram_stars", "ton_topup", "spin_cost", "roulette_cost", "ride_cost", "booster_purchase"
+    comment   String   @default("")
+    createdAt DateTime @default(now())
+    user      User     @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, createdAt])
+  }
+
+  model Action {
+    id     Int        @id @default(autoincrement())
+    userId Int
+    type   ActionType
+    ip     String     @default("")
+    time   DateTime   @default(now())
+    data   String     @default("{}")  // JSON payload
+    user   User       @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, type])
+    @@index([time])
+  }
+
+  model ActiveBooster {
+    id          Int         @id @default(autoincrement())
+    userId      Int
+    type        BoosterType
+    multiplier  Float       @default(1.5)   // 1.5 for MINING_BOOST_1_5X
+    activatedAt DateTime    @default(now())
+    expiresAt   DateTime
+    user        User        @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, expiresAt])
+  }
+
+  // ─── SHOP: CARD UPGRADE REQUIREMENTS ───
+
+  model CardUpgradeRequirement {
+    id            Int      @id @default(autoincrement())
+    cardName      CardName
+    level         Int                    // The level this requirement unlocks
+    description   String                 // Human-readable requirement description
+    requirementType String              // "level", "referrals", "task", "coins_spent", etc.
+    requirementValue String             // JSON value for the requirement
+    createdAt     DateTime @default(now())
+
+    @@unique([cardName, level])
+    @@index([cardName])
+  }
+
+  // ─── GAMES ───
+
+  model SpinSession {
+    id          String            @id @default(uuid())
+    userId      Int
+    tier        SpinTier
+    costStars   Int                      // Stars spent per spin
+    spinsCount  Int                      // How many spins (1, 3, 5, or 10)
+    results     Json                     // Array of { prizeType, prizeValue, prizeName }
+    totalWon    Json                     // Summary of total winnings
+    createdAt   DateTime          @default(now())
+    user        User              @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, createdAt])
+  }
+
+  model RouletteSession {
+    id          String            @id @default(uuid())
+    userId      Int
+    costStars   Int
+    result      Json                     // { prizeType, prizeValue, prizeName }
+    createdAt   DateTime          @default(now())
+    user        User              @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, createdAt])
+  }
+
+  model RideSession {
+    id          String            @id @default(uuid())
+    userId      Int
+    costStars   Int
+    startTime   DateTime          @default(now())
+    endTime     DateTime?
+    score       Int               @default(0)
+    coinsEarned Int               @default(0)
+    status      GameSessionStatus @default(ACTIVE)
+    expiresAt   DateTime                 // Auto-expire after 30 min
+    createdAt   DateTime          @default(now())
+    user        User              @relation(fields: [userId], references: [id])
+
+    @@index([userId])
+    @@index([userId, status])
+  }
+
+  // ─── TASKS ───
+
+  model Task {
+    id              Int          @id @default(autoincrement())
+    category        TaskCategory                // MAIN or OTHER
+    type            TaskType                    // CHANNEL_JOIN or INVITE_FRIENDS
+    title           String
+    description     String       @default("")
+    channelUsername  String?                     // For CHANNEL_JOIN tasks
+    requiredInvites Int?                        // For INVITE_FRIENDS tasks (5, 10, etc.)
+    rewardCoins     Int
+    isActive        Boolean      @default(true)
+    sortOrder       Int          @default(0)
+    createdAt       DateTime     @default(now())
+    updatedAt       DateTime     @updatedAt
+    completions     TaskCompletion[]
+
+    @@index([category, isActive])
+    @@index([type])
+  }
+
+  model TaskCompletion {
+    id          Int      @id @default(autoincrement())
+    userId      Int
+    taskId      Int
+    completedAt DateTime @default(now())
+    user        User     @relation(fields: [userId], references: [id])
+    task        Task     @relation(fields: [taskId], references: [id])
+
+    @@unique([userId, taskId])
+    @@index([userId])
+  }
+
+  // ─── DAILY COMBO ───
+
+  model DailyCombo {
+    id              Int      @id @default(autoincrement())
+    date            DateTime @unique              // Date (no time component)
+    correctItems    Json                          // Ordered array of 4 item IDs
+    createdAt       DateTime @default(now())
+
+    @@index([date])
+  }
+
+  // ─── TOURNAMENTS ───
+
+  model Tournament {
+    id          Int       @id @default(autoincrement())
+    name        String
+    description String    @default("")
+    startAt     DateTime
+    endAt       DateTime
+    isActive    Boolean   @default(true)
+    rewards     Json                             // Prize structure for top players
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    entries     TournamentEntry[]
+
+    @@index([isActive])
+    @@index([startAt, endAt])
+  }
+
+  model TournamentEntry {
+    id            Int        @id @default(autoincrement())
+    userId        Int
+    tournamentId  Int
+    starsSpent    Int        @default(0)          // Total stars spent during tournament
+    rank          Int?                            // Calculated at tournament end
+    rewardClaimed Boolean    @default(false)
+    user          User       @relation(fields: [userId], references: [id])
+    tournament    Tournament @relation(fields: [tournamentId], references: [id])
+
+    @@unique([userId, tournamentId])
+    @@index([tournamentId, starsSpent])
+    @@index([userId])
+  }
+
+  // ─── LIVE WINS (for Spin + Roulette feeds) ───
+
+  model LiveWin {
+    id          Int      @id @default(autoincrement())
+    userId      Int
+    username    String   @default("")
+    firstName   String   @default("")
+    gameType    String                           // "spin" or "roulette"
+    prizeName   String
+    prizeValue  String
+    profitMultiplier Float @default(1)           // How many X the player profited
+    createdAt   DateTime @default(now())
+
+    @@index([gameType, createdAt])
+    @@index([createdAt])
+  }
+
+  // ─── SYSTEM ───
+
+  model Settings {
+    id                      Int   @id @default(1)
+
+    // Fishing
+    fishingDurationSeconds  Int   @default(3600)  // 1 hour
+
+    // Card Upgrades
+    cardUpgradeValues       Json                  // { coinCapacity: [...13 values], miningRate: [...13 values] }
+
+    // Boosters
+    boosterPrices           Json                  // { MINING_BOOST_1_5X: { stars, durationMinutes }, AUTO_MINING: { stars, durationHours } }
+
+    // Spin Game
+    spinTiers               Json                  // Array of { tier, costStars, prizes: [{ name, type, value, weight }] }
+
+    // Roulette
+    rouletteCostStars       Int   @default(5)
+    roulettePrizes          Json                  // [{ name, type, value, weight }]
+
+    // Bruno's Ride
+    rideCostStars           Int   @default(1)
+    rideMaxCoinsPerSecond   Int   @default(8)     // Anti-cheat cap
+
+    // Daily Combo
+    comboRewards            Json                  // { 4: 100, 3: 75, 2: 50, 1: 25 }
+
+    // Daily Activity (Login Streak)
+    loginStreakRewards      Json                  // { 1: 5, 2: 10, ..., 10: 150 }
+
+    // Withdrawal
+    coinToTonRate           Int   @default(100000)   // 100,000 coins = 1 TON
+    minimumCoinWithdrawal   Int   @default(100000)
+    maximumCoinWithdrawal   Int   @default(1000000)
+    withdrawalFeeTon        Float @default(0.05)     // Blockchain fee
+
+    // Referral Rewards
+    referralRewards         Json                  // { 2: 200, 3: 500, ..., 13: 1050000 }
+
+    // Stars Top-Up
+    tonToStarsRate          Float @default(1.0)   // Base rate
+    tonToStarsBonusPercent  Int   @default(10)    // +10% bonus
+
+    // Channels / Tasks — managed via Task model, not here
+
+    updatedAt               DateTime @updatedAt
+  }
+
+  model Season {
+    id    Int      @id @default(autoincrement())
+    name  String   @unique
+    start DateTime
+    end   DateTime
+  }
+
+  model JobState {
+    name      String   @id
+    lastRunAt DateTime
+    nextRunAt DateTime
+  }
+
+  model Admin {
+    id        Int       @id @default(autoincrement())
+    username  String    @unique
+    password  String                             // bcrypt hashed
+    role      AdminRole @default(ADMIN)
+    createdAt DateTime  @default(now())
+    auditLogs AdminAuditLog[]
+  }
+
+  model AdminAuditLog {
+    id          Int      @id @default(autoincrement())
+    adminId     Int
+    action      String
+    targetType  String?                          // "user", "settings", "withdrawal", etc.
+    targetId    String?
+    details     Json?                            // Before/after snapshot
+    ip          String
+    createdAt   DateTime @default(now())
+    admin       Admin    @relation(fields: [adminId], references: [id])
+
+    @@index([adminId])
+    @@index([createdAt])
+    @@index([targetType, targetId])
+  }
+
+
+================================================================================
+SECTION 4: AUTHENTICATION & AUTHORIZATION
+================================================================================
+
+4.1  USER AUTHENTICATION FLOW
+
+  1. Frontend obtains initData from Telegram Mini App SDK.
+  2. Client sends POST /api/auth with { initData, ref? }.
+  3. Server validates initData signature via HMAC-SHA256 using BOT_TOKEN
+     (library: @tma.js/init-data-node). Validation window: 24 hours.
+  4. Server extracts: telegramId, username, firstName, lastName, languageCode,
+     isBot.
+  5. Upsert user: create if not exists, update profile fields if exists.
+  6. If ref parameter and user is NEW:
+     - Parse ref: format is "ref_<userId>" or raw "<telegramId>"
+     - Set referredById on the new user
+  7. Update lastLoginAt to now().
+  8. Return JWT token (signed with JWT_SECRET, expires 7 days).
+  9. All subsequent requests: Authorization: Bearer <token>.
+
+4.2  USER JWT MIDDLEWARE (Fastify plugin)
+
+  - Extract token from Authorization header.
+  - Verify JWT with JWT_SECRET.
+  - Load User from DB by decoded id.
+  - Reject blocked users (403).
+  - Decorate request with user object.
+
+4.3  ADMIN AUTHENTICATION
+
+  - Registration: POST /api/admin/auth/register — requires SUPER_ADMIN JWT.
+  - Login: POST /api/admin/auth/login — username + password (bcrypt verify).
+  - Admin JWT signed with ADMIN_JWT_SECRET (7-day expiry).
+  - Admin middleware verifies token, loads Admin record, checks role.
+
+4.4  API ENDPOINTS
+
+  POST  /api/auth
+    Body: { initData: string, ref?: string }
+    Response: { token: string, user: UserProfile, isNew: boolean }
+
+
+================================================================================
+SECTION 5: FISHING SYSTEM (CORE GAMEPLAY)
+================================================================================
+
+The Fishing section is the MAIN gameplay loop. Players earn coins by fishing.
+
+5.1  MECHANICS
+
+  - Player presses "Start Fishing" button.
+  - Bruno performs a fishing animation (frontend) in a river.
+  - Fishing lasts exactly 1 hour (3600 seconds, configurable in Settings).
+  - During fishing, coins accumulate in the Coin Capacity Tank at the
+    user's miningRate (coins per second).
+  - The tank has a maximum capacity (tankCapacity). Coins stop accumulating
+    when the tank is full.
+  - After the hour completes (or at any time), the player presses the
+    Fishing button again to COLLECT — coins transfer from tank to Main Balance.
+  - If the player collects before the hour is up, they get whatever has
+    accumulated so far.
+
+5.2  BOOSTER EFFECTS ON FISHING
+
+  - If the user has an active MINING_BOOST_1_5X booster:
+    Effective mining rate = miningRate * 1.5
+  - If the user has an active AUTO_MINING booster:
+    Fishing automatically starts again after collection without user input.
+    The server must handle this: when auto-mining is active and the user
+    collects (or the tank fills), a new fishing session begins immediately.
+
+5.3  COIN GENERATION FORMULA
+
+  On sync/collect, calculate:
+
+    elapsedSeconds = min(
+      (now - fishingStartedAt) / 1000,
+      fishingDurationSeconds           // cap at 1 hour
+    )
+
+    effectiveRate = miningRate * boosterMultiplier  // 1.0 if no booster
+
+    coinsGenerated = min(
+      elapsedSeconds * effectiveRate,
+      tankCapacity - tankCoins          // don't exceed tank
+    )
+
+    newTankCoins = tankCoins + coinsGenerated
+
+5.4  PURE FUNCTIONS (fishing.engine.ts)
+
+  interface FishingState {
+    isFishing: boolean;
+    fishingStartedAt: Date | null;
+    tankCoins: number;
+    tankCapacity: number;
+    miningRate: number;
+    boosterMultiplier: number;  // 1.0 or 1.5
+  }
+
+  interface FishingCalcResult {
+    newTankCoins: number;
+    coinsGenerated: number;
+    isTankFull: boolean;
+    fishingComplete: boolean;  // true if 1 hour has elapsed
+  }
+
+  function calculateFishingSync(
+    state: FishingState,
+    now: Date,
+    fishingDurationSeconds: number
+  ): FishingCalcResult
+
+  function canStartFishing(state: FishingState): {
+    allowed: boolean;
+    reason?: string;
+  }
+
+  Write comprehensive unit tests for edge cases:
+    - 0 seconds elapsed
+    - Exactly 3600 seconds elapsed
+    - >3600 seconds elapsed (should cap)
+    - Tank already full
+    - Booster multiplier applied correctly
+    - Tiny fractional rates
+
+5.5  API ENDPOINTS
+
+  POST  /api/fishing/start
+    Auth: JWT
+    Preconditions: Not already fishing, not blocked.
+    Effect: Set isFishing=true, fishingStartedAt=now(), tankCoins=0.
+    If AUTO_MINING active and tank had coins, collect first then restart.
+    Response: { fishing: { isFishing, fishingStartedAt, tankCapacity, miningRate } }
+
+  POST  /api/fishing/collect
+    Auth: JWT
+    Preconditions: Must be fishing (isFishing=true).
+    Effect:
+      1. Calculate coins generated (see §5.3).
+      2. Add to user.coins and user.totalCoinsEarned.
+      3. Reset tankCoins=0, isFishing=false, fishingStartedAt=null.
+      4. If AUTO_MINING booster active → immediately start new session
+         (isFishing=true, fishingStartedAt=now()).
+      5. Check and trigger referral rewards if level changed.
+    ALL of the above in prisma.$transaction().
+    Response: { coinsCollected: number, newBalance: number, autoRestarted: boolean }
+
+  GET   /api/fishing/status
+    Auth: JWT
+    Effect: If fishing, calculate current tank fill without persisting.
+    Response: {
+      isFishing: boolean,
+      fishingStartedAt: string | null,
+      tankCoins: number,           // Current calculated fill
+      tankCapacity: number,
+      miningRate: number,
+      effectiveMiningRate: number,  // With booster
+      fishingComplete: boolean,     // Whether the hour is up
+      activeBooster: { type, expiresAt } | null
+    }
+
+  POST  /api/fishing/sync
+    Auth: JWT
+    Effect: Calculate and persist current tank state. Useful for frontend
+    that wants a server-authoritative sync.
+    Response: Same as /status but with persisted tankCoins.
+
+
+================================================================================
+SECTION 6: COIN & WITHDRAWAL SYSTEM
+================================================================================
+
+6.1  COIN STATES
+
+  Coin Capacity Tank (tankCoins):
+    - Temporary storage during fishing.
+    - Transferred to Main Balance on collection.
+    - NOT directly spendable.
+
+  Main Balance (coins):
+    - Permanent spendable balance.
+    - Used for withdrawals.
+    - Cannot go negative.
+
+6.2  WITHDRAWAL RULES
+
+  - Exchange rate: 100,000 coins = 1 TON (configurable in Settings).
+  - Minimum withdrawal: 100,000 coins (configurable).
+  - Maximum withdrawal: 1,000,000 coins (configurable).
+  - Blockchain fee: 0.05 TON (display only — deducted from the TON sent).
+  - User must provide a valid TON wallet address.
+  - Blocked users cannot withdraw.
+
+6.3  WITHDRAWAL FLOW (TRANSACTIONAL)
+
+  Inside a single prisma.$transaction():
+    1. Re-read user (fresh state inside transaction).
+    2. Validate: not blocked, sufficient balance, within min/max limits.
+    3. Validate TON address format.
+    4. Deduct coins from user.coins.
+    5. Create Withdrawal record (status=PENDING).
+    6. Create Action log entry.
+  End transaction.
+
+  Then (outside transaction):
+    7. Queue TON transaction via tonService (p-queue, concurrency=1).
+    8. On success: Update withdrawal status=COMPLETED, set txHash.
+    9. On failure: Update withdrawal status=FAILED, set errorMessage.
+       Do NOT refund automatically (admin must review failed withdrawals).
+
+6.4  TRANSACTION HISTORY
+
+  Return list of user's withdrawals with: address, date, time, amount in TON,
+  status, txHash.
+
+6.5  API ENDPOINTS
+
+  GET   /api/withdrawals/info
+    Auth: JWT
+    Response: { coinToTonRate, minCoins, maxCoins, feeTon, currentBalance }
+
+  POST  /api/withdrawals
+    Auth: JWT
+    Body: { targetAddress: string, amountCoins: number }
+    Response: { withdrawal: { id, amountCoins, amountTon, status } }
+
+  GET   /api/withdrawals/history
+    Auth: JWT
+    Query: { page?, limit? }
+    Response: { withdrawals: [...], total, page, totalPages }
+
+
+================================================================================
+SECTION 7: LEVEL SYSTEM
+================================================================================
+
+7.1  LEVELS
+
+  The game has 13 levels.
+  A player's level is determined by the MINIMUM of their two card upgrade
+  levels:
+
+    level = min(coinCapacityLevel, miningRateLevel)
+
+  This means a player must upgrade BOTH cards to advance their character level.
+
+7.2  LEVEL EFFECTS
+
+  Level determines:
+    - Visual character progression (frontend concern)
+    - Eligibility for card upgrades (some upgrades require specific levels)
+    - Referral rewards for the referrer
+
+7.3  LEVEL CALCULATION (Pure Function)
+
+  File: src/lib/levelUtils.ts
+
+  function calculateLevel(coinCapacityLevel: number, miningRateLevel: number): number {
+    return Math.min(coinCapacityLevel, miningRateLevel);
+  }
+
+  After any card upgrade, recalculate level. If level changed upward, trigger
+  referral reward for the referrer (see §11).
+
+
+================================================================================
+SECTION 8: SHOP SECTION (CARDS & BOOSTERS)
+================================================================================
+
+8.1  CARDS
+
+  Two upgrade cards:
+
+  1. COIN_CAPACITY — Increases tankCapacity.
+     Each level increases how many coins the tank can hold during the 1-hour
+     fishing session.
+
+  2. MINING_RATE — Increases miningRate (coins per second).
+     Each level increases how fast coins generate while fishing.
+
+  Both cards have 13 levels (matching the 13 game levels).
+
+  Card upgrade VALUES are stored in Settings.cardUpgradeValues as JSON:
+  {
+    "coinCapacity": [100, 200, 350, 500, 750, 1000, 1400, 1800, 2300, 3000, 3800, 4800, 6000],
+    "miningRate": [0.0278, 0.0556, 0.0972, 0.1389, 0.2083, 0.2778, 0.3889, 0.5000, 0.6389, 0.8333, 1.0556, 1.3333, 1.6667]
+  }
+  Index 0 = level 1 value, index 12 = level 13 value.
+
+  NOTE: miningRate values are coins/second. At level 1: ~100 coins/hour.
+  At level 13: ~6000 coins/hour (matching max tank capacity).
+
+8.2  CARD UPGRADE RULES
+
+  - Card upgrades are FREE (no coin cost).
+  - BUT each level has REQUIREMENTS that must be met before upgrading.
+  - Requirements are stored in the CardUpgradeRequirement table and are
+    fully admin-manageable.
+  - Example requirement types:
+    - "level": Player must be at least level N
+    - "referrals": Player must have invited N friends
+    - "coins_spent": Player must have spent N total coins
+    - "task_count": Player must have completed N tasks
+    - "login_streak": Player must have a streak of N days
+
+  When upgrading:
+    1. Look up requirements for (cardName, nextLevel).
+    2. Validate all requirements are met.
+    3. Update the card level field.
+    4. Update tankCapacity or miningRate to the new level's value.
+    5. Recalculate user level = min(coinCapacityLevel, miningRateLevel).
+    6. If level changed, trigger referral reward.
+    All in prisma.$transaction().
+
+8.3  BOOSTERS
+
+  Two boosters:
+
+  1. MINING_BOOST_1_5X
+     - Multiplies mining rate by 1.5 for a set duration.
+     - Duration and price (in Stars) defined in Settings.boosterPrices.
+     - Only one mining boost can be active at a time.
+
+  2. AUTO_MINING
+     - Automatically restarts fishing when collection happens.
+     - Duration and price (in Stars) defined in Settings.boosterPrices.
+     - While active, the server auto-starts fishing on collect.
+
+  Booster purchase flow:
+    1. Validate user has enough starsBalance.
+    2. Deduct stars from starsBalance.
+    3. Create StarsTransaction (negative amount, source="booster_purchase").
+    4. Create ActiveBooster with expiresAt = now + duration.
+    5. If MINING_BOOST_1_5X, do NOT restart existing fishing — the boost
+       applies on next sync/collect calculation.
+    All in prisma.$transaction().
+
+  Booster expiry:
+    - On every fishing calculation, check if booster has expired.
+    - Expired boosters return multiplier to 1.0.
+    - Session cleanup job removes expired booster records.
+
+8.4  API ENDPOINTS
+
+  GET   /api/shop/cards
+    Auth: JWT
+    Response: {
+      cards: [
+        {
+          name: "COIN_CAPACITY",
+          currentLevel: number,
+          currentValue: number,
+          nextLevel: number | null,
+          nextValue: number | null,
+          requirements: [{ type, value, met: boolean, description }],
+          canUpgrade: boolean
+        },
+        { name: "MINING_RATE", ... same structure }
+      ]
+    }
+
+  POST  /api/shop/cards/:cardName/upgrade
+    Auth: JWT
+    Params: cardName = "COIN_CAPACITY" | "MINING_RATE"
+    Response: { card: { name, newLevel, newValue }, user: { level } }
+
+  GET   /api/shop/boosters
+    Auth: JWT
+    Response: {
+      boosters: [
+        { type, name, description, priceStars, durationMinutes, isActive, expiresAt? },
+        ...
+      ]
+    }
+
+  POST  /api/shop/boosters/:type/purchase
+    Auth: JWT
+    Params: type = "MINING_BOOST_1_5X" | "AUTO_MINING"
+    Response: { booster: { type, activatedAt, expiresAt }, starsBalance }
+
+
+================================================================================
+SECTION 9: GAMES SECTION (SPIN, ROULETTE, BRUNO'S RIDE)
+================================================================================
+
+9.1  BALANCES DISPLAY
+
+  The Games section shows two balances at the top:
+    - Main Balance (coins)
+    - Stars Balance (starsBalance)
+  Plus a "+" button to top up stars (see §16).
+
+9.2  SPIN GAME
+
+  Players spin a reward wheel to win prizes.
+
+  9.2.1  SPIN TIERS
+    There are 5 spin tiers with increasing costs and better rewards.
+    Defined in Settings.spinTiers as JSON array:
+    [
+      {
+        "tier": "TIER_1",
+        "costStars": 1,
+        "prizes": [
+          { "name": "10 Coins", "type": "coins", "value": 10, "weight": 0.30 },
+          { "name": "25 Coins", "type": "coins", "value": 25, "weight": 0.25 },
+          { "name": "50 Coins", "type": "coins", "value": 50, "weight": 0.20 },
+          { "name": "5 Stars", "type": "stars", "value": 5, "weight": 0.15 },
+          { "name": "100 Coins", "type": "coins", "value": 100, "weight": 0.08 },
+          { "name": "Gift", "type": "gift", "value": "small_gift", "weight": 0.02 }
+        ]
+      },
+      ... (4 more tiers with higher costs and better prizes)
+    ]
+
+    Admin creates/edits all tiers via admin API.
+
+  9.2.2  MULTIPLE SPINS
+    Players can spin: 1x, 3x, 5x, or 10x at once.
+    Total cost = costStars * spinCount.
+    Each spin produces an independent result.
+
+  9.2.3  SPIN FLOW
+    1. Validate user has enough starsBalance for totalCost.
+    2. Deduct stars in transaction.
+    3. Generate results using weighted random selection for each spin.
+    4. Apply rewards (coins added, stars added, gifts created).
+    5. Create SpinSession record with all results.
+    6. Create StarsTransaction (debit).
+    7. Update TournamentEntry.starsSpent if active tournament.
+    8. Create LiveWin record for significant wins.
+    All in prisma.$transaction().
+
+  9.2.4  LIVE WINS FEED
+    Return most recent 20 wins across all players.
+
+  9.2.5  WINNERS LIST
+    Return recent winners with: name, username, date, time, prize,
+    profit multiplier, winning details.
+
+  9.2.6  PRIZE LIST
+    Return all possible prizes for the selected tier.
+
+  API ENDPOINTS:
+
+  GET   /api/games/spin/tiers
+    Auth: JWT
+    Response: { tiers: [{ tier, costStars, prizes }] }
+
+  POST  /api/games/spin/play
+    Auth: JWT
+    Body: { tier: SpinTier, count: 1 | 3 | 5 | 10 }
+    Response: { results: [...], totalWon: { coins, stars, gifts }, newStarsBalance }
+
+  GET   /api/games/spin/live-wins
+    Auth: JWT
+    Response: { wins: [...last 20] }
+
+  GET   /api/games/spin/winners
+    Auth: JWT
+    Query: { page?, limit? }
+    Response: { winners: [...], total }
+
+  GET   /api/games/spin/prizes/:tier
+    Auth: JWT
+    Response: { prizes: [...] }
+
+9.3  ROULETTE GAME
+
+  A chance-based game where rewards scroll and one stops as the prize.
+
+  9.3.1  MECHANICS
+    - Cost per play: rouletteCostStars (from Settings).
+    - Prize pool defined in Settings.roulettePrizes.
+    - Possible rewards: Telegram gifts, Telegram Stars, coins.
+    - Server selects the winning prize via weighted random.
+    - Frontend animates the scrolling effect.
+
+  9.3.2  SETTINGS PANEL (frontend concern, but backend must store prefs)
+    - Demo mode: boolean (stored in user session/frontend, not DB)
+    - Sound/Music: already in User.musicEnabled
+
+  9.3.3  PLAY FLOW
+    1. Validate starsBalance >= rouletteCostStars.
+    2. Deduct stars.
+    3. Select prize via weighted random.
+    4. Apply reward.
+    5. Create RouletteSession record.
+    6. Create StarsTransaction (debit).
+    7. Update TournamentEntry.starsSpent if active tournament.
+    8. Create LiveWin record.
+    All in prisma.$transaction().
+
+  API ENDPOINTS:
+
+  POST  /api/games/roulette/play
+    Auth: JWT
+    Response: { result: { prizeName, prizeType, prizeValue }, newStarsBalance }
+
+  GET   /api/games/roulette/prizes
+    Auth: JWT
+    Response: { prizes: [...], costStars }
+
+  GET   /api/games/roulette/live-wins
+    Auth: JWT
+    Response: { wins: [...last 20] }
+
+9.4  BRUNO'S RIDE
+
+  An arcade endless-runner game (like Chrome dinosaur game) where Bruno
+  drives a red car through a city, jumping over obstacles and collecting coins.
+
+  9.4.1  MECHANICS
+    - Entry cost: rideCostStars (from Settings).
+    - Car speed increases every second → progressively harder.
+    - Player collects coins during gameplay.
+    - Score tracked on frontend, coins claimed to server on game end.
+
+  9.4.2  ANTI-CHEAT
+    - Server tracks session start time.
+    - On claim, calculate max possible coins: duration * rideMaxCoinsPerSecond.
+    - If claimed coins exceed max → status = FLAGGED_CHEAT, user blocked.
+    - Session expires after 30 minutes (expiresAt field).
+    - Cannot claim an already-completed or expired session.
+    - Cannot have multiple active sessions simultaneously.
+
+  9.4.3  PLAY FLOW
+    1. Validate starsBalance >= rideCostStars.
+    2. Validate no other ACTIVE ride session exists.
+    3. Deduct stars.
+    4. Create RideSession (status=ACTIVE, expiresAt=now+30min).
+    5. Create StarsTransaction (debit).
+    6. Update TournamentEntry.starsSpent if active tournament.
+    Return sessionId to frontend.
+
+  API ENDPOINTS:
+
+  POST  /api/games/brunos-ride/start
+    Auth: JWT
+    Response: { sessionId, startTime }
+
+  POST  /api/games/brunos-ride/claim
+    Auth: JWT
+    Body: { sessionId: string, coins: number, score: number }
+    Validations:
+      - Session exists and belongs to user
+      - Session status is ACTIVE
+      - Session not expired
+      - Coins within anti-cheat limit
+    Response: { coinsEarned, newBalance, score }
+
+  GET   /api/games/brunos-ride/status
+    Auth: JWT
+    Response: { activeSession: { sessionId, startTime, expiresAt } | null }
+
+
+================================================================================
+SECTION 10: TASKS SECTION
+================================================================================
+
+10.1  TASK CATEGORIES
+
+  MAIN TASKS — Community engagement tasks:
+    - Channel join tasks
+    - Invite friends tasks
+
+  OTHER TASKS — Ambassador/partner tasks:
+    - Same types but for partner channels
+
+  Tasks are stored in the Task model and fully managed via admin API.
+
+10.2  CHANNEL JOIN TASKS
+
+  Flow:
+    1. Player sees task with channel name and reward.
+    2. Player clicks "Complete" → frontend redirects to Telegram channel.
+    3. Player joins the channel and returns to the game.
+    4. Player clicks "Check".
+    5. Server calls bot.api.getChatMember(channelUsername, telegramId).
+    6. If member status is "member", "administrator", or "creator":
+       - Create TaskCompletion record.
+       - Create UserSubscription record.
+       - Add rewardCoins to user.coins and user.totalCoinsEarned.
+       - Create Action log.
+    7. If not a member: return error "Not yet joined".
+
+10.3  INVITE FRIENDS TASKS
+
+  Flow:
+    1. Player sees task: "Invite 5 friends" (or 10, etc.).
+    2. System counts user's referrals: count of User where referredById = userId.
+    3. If count >= task.requiredInvites AND task not yet completed:
+       - Create TaskCompletion.
+       - Add rewardCoins.
+    4. If count < required: return progress info.
+
+10.4  API ENDPOINTS
+
+  GET   /api/tasks
+    Auth: JWT
+    Response: {
+      main: [{ id, title, description, type, rewardCoins, completed, progress? }],
+      other: [{ ... same }]
+    }
+    Notes: For INVITE_FRIENDS tasks, include { required, current } in progress.
+
+  POST  /api/tasks/:taskId/check
+    Auth: JWT
+    Response: { completed: boolean, reward?: number, error?: string }
+
+
+================================================================================
+SECTION 11: FRIENDS SECTION (REFERRAL SYSTEM)
+================================================================================
+
+11.1  REFERRAL LINK
+
+  Players have a unique referral link:
+    https://t.me/{BOT_USERNAME}?start=ref_{userId}
+
+  Two sharing methods (frontend concern, but backend provides the link):
+    - Share Link: Deep link that opens Telegram sharing
+    - Copy Link: Clipboard copy
+
+11.2  REFERRAL STATISTICS
+
+  - Total referrals: Count of users where referredById = this user's id.
+  - Coins earned from referrals: user.referralEarnings.
+
+11.3  FRIENDS LIST
+
+  List of all users who joined via this player's link.
+  Each entry shows: profilePicture (frontend), username, firstName,
+  coins earned from that friend.
+
+11.4  REFERRAL REWARDS
+
+  When a referred friend LEVELS UP, the referrer earns a one-time reward.
+  The rewardedLevels JSON array tracks which levels have been rewarded
+  to prevent double-counting.
+
+  Referral Rewards by Level (stored in Settings.referralRewards):
+
+    Level 2  → 200 coins
+    Level 3  → 500 coins
+    Level 4  → 2,000 coins
+    Level 5  → 5,000 coins
+    Level 6  → 10,000 coins
+    Level 7  → 20,000 coins
+    Level 8  → 50,000 coins
+    Level 9  → 100,000 coins
+    Level 10 → 250,000 coins
+    Level 11 → 500,000 coins
+    Level 12 → 1,000,000 coins
+    Level 13 → 1,050,000 coins
+
+  Implementation:
+    After any level change (from card upgrade), check:
+      1. Does user have a referrer (referredById not null)?
+      2. Load referrer.
+      3. Parse user's rewardedLevels JSON array.
+      4. For each level from 2 to newLevel that is NOT in rewardedLevels:
+         - Add reward to referrer.coins and referrer.referralEarnings.
+         - Add level to rewardedLevels.
+         - Create Action log for referrer.
+      5. Save all updates.
+    All inside the existing upgrade transaction.
+
+11.5  "MORE DETAILS" ENDPOINT
+
+  Returns a structured explanation of how referral rewards work, including
+  the full reward table.
+
+11.6  API ENDPOINTS
+
+  GET   /api/friends/invite-link
+    Auth: JWT
+    Response: { inviteLink: string }
+
+  GET   /api/friends/stats
+    Auth: JWT
+    Response: { totalReferrals: number, referralEarnings: number }
+
+  GET   /api/friends/list
+    Auth: JWT
+    Query: { page?, limit? }
+    Response: {
+      friends: [{ telegramId, username, firstName, coinsEarnedFromThem }],
+      total, page, totalPages
+    }
+
+  GET   /api/friends/reward-details
+    Auth: JWT
+    Response: { rewards: [{ level, coins }] }
+
+
+================================================================================
+SECTION 12: DAILY COMBO SYSTEM
+================================================================================
+
+12.1  MECHANICS
+
+  A daily puzzle that resets at 00:00 UTC every day.
+
+  8 fishing-related items (fixed set, identified by ID):
+    1. Fishing hat
+    2. Fishing rod
+    3. Fish
+    4. Fishing bucket
+    5. Fishing boots
+    6. Fishing boat
+    7. Fishing bag
+    8. Fishing net
+
+  Each day, the admin (or automated system) sets 4 items in a specific order
+  as the correct answer. This is stored in the DailyCombo table.
+
+  Players must:
+    - Select 4 items from the 8 available.
+    - Place them in the correct order.
+
+  Players get ONE attempt per day.
+
+12.2  SCORING (Pure Function)
+
+  File: src/modules/daily-combo/daily-combo.engine.ts
+
+  function evaluateComboAnswer(
+    playerItems: number[],    // Array of 4 item IDs in player's order
+    correctItems: number[]    // Array of 4 item IDs in correct order
+  ): { correctCount: number; reward: number }
+
+  Scoring rules:
+    - Compare position by position.
+    - Count how many items match in the EXACT same position.
+    - 4 correct → 100 coins
+    - 3 correct → 75 coins
+    - 2 correct → 50 coins
+    - 1 correct → 25 coins
+    - 0 correct → 0 coins
+
+  Reward values come from Settings.comboRewards.
+
+12.3  API ENDPOINTS
+
+  GET   /api/daily-combo/today
+    Auth: JWT
+    Response: {
+      items: [{ id, name }],          // All 8 items
+      alreadyAttempted: boolean,
+      lastResult?: { correctCount, reward },
+      resetsAt: string                // Next 00:00 UTC ISO string
+    }
+
+  POST  /api/daily-combo/submit
+    Auth: JWT
+    Body: { items: [number, number, number, number] }  // 4 item IDs in order
+    Validations:
+      - Exactly 4 items
+      - All items are valid IDs (1–8)
+      - No duplicates
+      - Player hasn't already attempted today
+    Response: { correctCount, reward, correctAnswer: number[] }
+    Side effects:
+      - Update user.lastComboDate = today
+      - Update user.lastComboResult = correctCount
+      - Add reward to user.coins (if > 0)
+      - Create Action log
+
+
+================================================================================
+SECTION 13: DAILY ACTIVITY (LOGIN STREAK)
+================================================================================
+
+13.1  MECHANICS
+
+  Players earn coins by logging in daily. The streak resets if they miss a day.
+
+  Streak Rewards (stored in Settings.loginStreakRewards):
+    Day 1  → 5 coins
+    Day 2  → 10 coins
+    Day 3  → 15 coins
+    Day 4  → 25 coins
+    Day 5  → 35 coins
+    Day 6  → 50 coins
+    Day 7  → 65 coins
+    Day 8  → 80 coins
+    Day 9  → 100 coins
+    Day 10 → 150 coins
+
+  After Day 10, the cycle repeats from Day 1.
+
+13.2  STREAK LOGIC
+
+  On claim:
+    1. Get today's date (UTC, date only, no time).
+    2. Get user.lastLoginDate (date only).
+    3. If lastLoginDate == today → already claimed, reject.
+    4. If lastLoginDate == yesterday → streak continues: loginStreak += 1.
+    5. If lastLoginDate is older than yesterday OR null → streak resets: loginStreak = 1.
+    6. Determine reward day = ((loginStreak - 1) % 10) + 1.
+    7. Look up reward from Settings.loginStreakRewards[rewardDay].
+    8. Add reward to user.coins.
+    9. Update user.lastLoginDate = today.
+    10. Create Action log.
+
+13.3  API ENDPOINTS
+
+  GET   /api/daily-activity/status
+    Auth: JWT
+    Response: {
+      currentStreak: number,
+      canClaim: boolean,
+      todayReward: number,           // What they'll get if they claim
+      streakRewards: [{ day, coins, claimed }],  // Full 10-day display
+      resetsAt: string               // Next 00:00 UTC
+    }
+
+  POST  /api/daily-activity/claim
+    Auth: JWT
+    Response: { reward: number, newStreak: number, newBalance: number }
+
+
+================================================================================
+SECTION 14: SETTINGS & USER PROFILE
+================================================================================
+
+14.1  SETTINGS MENU
+
+  The three-line menu opens a settings panel with:
+
+  - Language: RU / EN (stored in user.language)
+  - Music: Enable / Disable (stored in user.musicEnabled)
+  - Support: Returns a support contact link (from Settings or env)
+  - News: Returns news channel link (from Settings or env)
+  - FAQ: Returns FAQ content or link
+  - User Info: Telegram picture (frontend), Telegram name, User ID
+
+14.2  API ENDPOINTS
+
+  GET   /api/user/me
+    Auth: JWT
+    Response: Full user profile (all fields relevant to frontend).
+
+  PUT   /api/user/settings
+    Auth: JWT
+    Body: { language?: "EN" | "RU", musicEnabled?: boolean }
+    Response: { user: { language, musicEnabled } }
+
+  GET   /api/user/app-info
+    Auth: JWT
+    Response: { supportLink, newsChannel, faqUrl }
+
+
+================================================================================
+SECTION 15: TELEGRAM BOT
+================================================================================
+
+15.1  COMMANDS
+
+  /start — Welcome message with a button to open the Mini App.
+            If start payload contains ref_<id>, pass to auth flow.
+  /help  — Help text explaining the game.
+
+15.2  PAYMENT HANDLING
+
+  pre_checkout_query:
+    - Always approve.
+
+  successful_payment:
+    - Parse payload to determine product type:
+      - "booster_<type>_<telegramId>" → activate booster
+      - "stars_topup_<telegramId>" → credit starsBalance
+      - "spin_<tier>_<count>_<telegramId>" → handle spin purchase
+      - "roulette_<telegramId>" → handle roulette purchase
+      - "ride_<telegramId>" → handle ride purchase
+    - Find user by telegramId.
+    - Apply the appropriate effect.
+    - Create StarsTransaction record.
+
+15.3  SUBSCRIPTION VERIFICATION
+
+  checkIfUserIsSubscribed(channelUsername, telegramId):
+    - bot.api.getChatMember(channelUsername, telegramId)
+    - Return true if status is "member", "administrator", or "creator"
+    - Handle errors gracefully (bot not admin, channel not found)
+
+
+================================================================================
+SECTION 16: STARS & PAYMENT SYSTEM
+================================================================================
+
+16.1  STARS BALANCE
+
+  Users have an in-game starsBalance (Int) that tracks their Telegram Stars
+  available for spending on games and boosters.
+
+16.2  TOP-UP METHODS
+
+  Method 1: Telegram Stars (direct)
+    - Create Telegram Stars invoice.
+    - On successful payment, credit starsBalance.
+
+  Method 2: TON Coin
+    - Player sends TON to a deposit address (or uses invoice).
+    - Convert at tonToStarsRate with +10% bonus (tonToStarsBonusPercent).
+    - Example: 1 TON = 100 Stars + 10 bonus = 110 Stars.
+
+16.3  API ENDPOINTS
+
+  GET   /api/stars/balance
+    Auth: JWT
+    Response: { starsBalance, topUpOptions: { telegramStars: true, tonCoin: { rate, bonusPercent } } }
+
+  POST  /api/stars/create-invoice
+    Auth: JWT
+    Body: { amount: number }
+    Response: { invoiceLink: string }
+
+  POST  /api/stars/topup-ton
+    Auth: JWT
+    Body: { amountTon: number }
+    Notes: This may require a TON payment verification flow.
+    Response: { starsReceived, bonusStars, newBalance }
+
+
+================================================================================
+SECTION 17: TOURNAMENT SYSTEM
+================================================================================
+
+17.1  MECHANICS
+
+  Tournaments run for a set period (e.g., 1 week).
+  Players are ranked by total Telegram Stars spent on games during the
+  tournament period.
+
+  Every time a player spends stars on Spin, Roulette, or Bruno's Ride,
+  their TournamentEntry.starsSpent is incremented (if an active tournament
+  exists).
+
+17.2  LEADERBOARD
+
+  Top 100 players ranked by starsSpent during the active tournament.
+
+17.3  TOURNAMENT LIFECYCLE
+
+  - Admin creates tournament with name, startAt, endAt, rewards.
+  - Tournament becomes active when now >= startAt && now < endAt.
+  - When tournament ends (endAt reached):
+    - Background job ranks all entries.
+    - Top players receive rewards (defined in tournament.rewards JSON).
+    - Tournament.isActive set to false.
+
+17.4  API ENDPOINTS
+
+  GET   /api/tournaments/active
+    Auth: JWT
+    Response: { tournament: { id, name, endAt, timeRemaining } | null }
+
+  GET   /api/tournaments/:id/leaderboard
+    Auth: JWT
+    Query: { page?, limit? }
+    Response: {
+      leaderboard: [{ rank, username, firstName, starsSpent }],
+      myRank: number | null,
+      myStarsSpent: number,
+      total
+    }
+
+
+================================================================================
+SECTION 18: ADMIN PANEL API
+================================================================================
+
+All admin endpoints prefixed with /api/admin. Require admin JWT.
+
+ROLE PERMISSIONS MATRIX:
+
+  Endpoint Category          | MODERATOR | ADMIN | SUPER_ADMIN
+  ---------------------------|-----------|-------|------------
+  View users                 | Yes       | Yes   | Yes
+  View analytics             | Yes       | Yes   | Yes
+  View audit log             | Yes       | Yes   | Yes
+  Block/unblock users        | No        | Yes   | Yes
+  Reset user refills         | No        | Yes   | Yes
+  Manage tasks/channels      | No        | Yes   | Yes
+  Manage seasons/tournaments | No        | Yes   | Yes
+  Set daily combo            | No        | Yes   | Yes
+  Reject withdrawals         | No        | Yes   | Yes
+  Approve withdrawals        | No        | No    | Yes
+  Adjust user coins/stars    | No        | No    | Yes
+  Update game settings       | No        | No    | Yes
+  Register new admins        | No        | No    | Yes
+  Broadcast messages         | No        | No    | Yes
+  Delete entities            | No        | No    | Yes
+
+Implement role checking as a Fastify preHandler that takes a minimum
+required role and compares against the admin's role.
+
+--------------------------------------------------------------------------------
+18.1  ADMIN AUTHENTICATION
+--------------------------------------------------------------------------------
+
+  POST  /api/admin/auth/login
+    Body: { username, password }
+    Response: { token, admin: { id, username, role } }
+
+  POST  /api/admin/auth/register          (SUPER_ADMIN)
+    Body: { username, password, role }
+    Response: { admin: { id, username, role } }
+
+  GET   /api/admin/auth/me
+    Response: { admin: { id, username, role, createdAt } }
+
+  PUT   /api/admin/auth/change-password
+    Body: { currentPassword, newPassword }
+
+--------------------------------------------------------------------------------
+18.2  USER MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/users
+    Query: { page?, limit?, search?, sortBy?, sortOrder?, isBlocked?, level? }
+    Response: { users, total, page, totalPages }
+    Supports: pagination (default 50), search by username/telegramId/firstName,
+    sort by any field, filter by blocked/level.
+
+  GET   /api/admin/users/:id
+    Response: Full user with relations (withdrawals, stars, actions, referrals,
+    game sessions, active boosters).
+
+  PUT   /api/admin/users/:id/block                    (ADMIN+)
+    Body: { reason }
+    Side effects: AdminAuditLog, Action log.
+
+  PUT   /api/admin/users/:id/unblock                  (ADMIN+)
+    Body: { reason }
+
+  POST  /api/admin/users/:id/adjust-coins             (SUPER_ADMIN)
+    Body: { amount: number, reason }
+    Notes: Positive = grant, negative = deduct. Cannot go below 0.
+    Log before/after values.
+
+  POST  /api/admin/users/:id/adjust-stars             (SUPER_ADMIN)
+    Body: { amount: number, reason }
+
+  POST  /api/admin/users/:id/reset-streak             (ADMIN+)
+    Resets login streak to 0.
+
+  GET   /api/admin/users/:id/actions
+    Query: { page?, limit?, type? }
+
+--------------------------------------------------------------------------------
+18.3  GAME SETTINGS
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/settings
+    Response: Full Settings object.
+
+  PUT   /api/admin/settings                            (SUPER_ADMIN)
+    Body: Partial<Settings>
+    Validate all values with Zod:
+      - Probabilities must sum to 1.0 within each prize pool
+      - Arrays must have exactly 13 elements for card values
+      - Rates must be positive numbers
+    Log before/after to AdminAuditLog.
+    Invalidate settings cache immediately.
+
+  PUT   /api/admin/settings/card-values                (SUPER_ADMIN)
+    Body: { coinCapacity: number[], miningRate: number[] }
+    Validation: Each must be 13 elements, monotonically increasing.
+
+  PUT   /api/admin/settings/referral-rewards           (SUPER_ADMIN)
+    Body: { rewards: Record<number, number> }
+
+  PUT   /api/admin/settings/spin-tiers                 (SUPER_ADMIN)
+    Body: { tiers: SpinTierConfig[] }
+    Validation: Each tier's prize weights must sum to 1.0.
+
+  PUT   /api/admin/settings/roulette                   (SUPER_ADMIN)
+    Body: { costStars?, prizes? }
+
+  PUT   /api/admin/settings/economy                    (SUPER_ADMIN)
+    Body: { coinToTonRate?, minimumCoinWithdrawal?, maximumCoinWithdrawal?,
+            withdrawalFeeTon?, tonToStarsRate?, tonToStarsBonusPercent? }
+
+  PUT   /api/admin/settings/boosters                   (SUPER_ADMIN)
+    Body: { boosterPrices: BoosterPricesConfig }
+
+  PUT   /api/admin/settings/combo-rewards              (SUPER_ADMIN)
+    Body: { rewards: Record<number, number> }
+
+  PUT   /api/admin/settings/login-streak-rewards       (SUPER_ADMIN)
+    Body: { rewards: Record<number, number> }
+
+--------------------------------------------------------------------------------
+18.4  WITHDRAWAL MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/withdrawals
+    Query: { page?, limit?, status?, userId?, sortBy?, sortOrder? }
+
+  GET   /api/admin/withdrawals/:id
+
+  PUT   /api/admin/withdrawals/:id/approve             (SUPER_ADMIN)
+    Triggers TON transaction. Updates status PROCESSING → COMPLETED/FAILED.
+
+  PUT   /api/admin/withdrawals/:id/reject              (ADMIN+)
+    Body: { reason }
+    Refunds coins to user. Status → CANCELLED.
+
+  GET   /api/admin/withdrawals/stats
+    Response: { totalPending, totalPendingAmount, totalCompleted,
+    totalCompletedAmount, totalFailed, todayCount, todayAmount }
+
+--------------------------------------------------------------------------------
+18.5  TASK MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/tasks
+    Query: { category?, type?, isActive? }
+
+  POST  /api/admin/tasks                               (ADMIN+)
+    Body: { category, type, title, description?, channelUsername?,
+            requiredInvites?, rewardCoins, sortOrder? }
+    For CHANNEL_JOIN: validate channel exists via Bot API.
+
+  PUT   /api/admin/tasks/:id                           (ADMIN+)
+    Body: Partial<Task>
+
+  DELETE /api/admin/tasks/:id                          (SUPER_ADMIN)
+
+--------------------------------------------------------------------------------
+18.6  DAILY COMBO MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/daily-combo
+    Query: { from?, to? }
+    Response: List of DailyCombo records.
+
+  POST  /api/admin/daily-combo                         (ADMIN+)
+    Body: { date: string, correctItems: [number, number, number, number] }
+    Validation: Exactly 4 items, valid IDs (1–8), no duplicates.
+    Upsert: If combo already exists for date, update it.
+
+  POST  /api/admin/daily-combo/bulk                    (ADMIN+)
+    Body: { combos: [{ date, correctItems }] }
+    Notes: Set combos for multiple days at once.
+
+--------------------------------------------------------------------------------
+18.7  TOURNAMENT MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/tournaments
+  POST  /api/admin/tournaments                         (ADMIN+)
+    Body: { name, description?, startAt, endAt, rewards }
+    Validation: startAt < endAt, no overlapping active tournaments.
+
+  PUT   /api/admin/tournaments/:id                     (ADMIN+)
+  DELETE /api/admin/tournaments/:id                    (SUPER_ADMIN)
+
+  POST  /api/admin/tournaments/:id/finalize            (SUPER_ADMIN)
+    Manually finalize a tournament (rank entries, distribute rewards).
+
+--------------------------------------------------------------------------------
+18.8  CARD UPGRADE REQUIREMENTS
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/card-requirements
+    Response: All CardUpgradeRequirement records.
+
+  POST  /api/admin/card-requirements                   (ADMIN+)
+    Body: { cardName, level, description, requirementType, requirementValue }
+
+  PUT   /api/admin/card-requirements/:id               (ADMIN+)
+  DELETE /api/admin/card-requirements/:id              (SUPER_ADMIN)
+
+--------------------------------------------------------------------------------
+18.9  ANALYTICS & DASHBOARD
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/analytics/overview
+    Response: {
+      totalUsers, activeUsersToday, activeUsersWeek, newUsersToday,
+      newUsersWeek, totalCoinsInCirculation, totalCoinsEverEarned,
+      totalWithdrawalsCompleted, totalWithdrawalsTon,
+      totalStarsInCirculation
+    }
+
+  GET   /api/admin/analytics/registrations
+    Query: { period: "day" | "week" | "month", from?, to? }
+    Response: { data: [{ date, count }] }
+
+  GET   /api/admin/analytics/economy
+    Query: { period }
+    Response: {
+      data: [{
+        date, coinsEarned, coinsWithdrawn, coinsFromFishing,
+        coinsFromTasks, coinsFromReferrals, coinsFromCombo,
+        coinsFromDailyLogin, netFlow
+      }]
+    }
+
+  GET   /api/admin/analytics/games
+    Response: {
+      spin: { totalPlayed, totalStarsSpent, avgRewardPerSession },
+      roulette: { totalPlayed, totalStarsSpent },
+      brunosRide: { totalPlayed, totalStarsSpent, cheatersDetected },
+      totalStarsRevenue
+    }
+
+  GET   /api/admin/analytics/referrals
+    Response: {
+      totalReferrals, totalReferralRewardsPaid,
+      topReferrers: [{ userId, username, referralCount, totalEarnings }]
+    }
+
+--------------------------------------------------------------------------------
+18.10  ADMIN AUDIT LOG
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/audit-log
+    Query: { page?, limit?, adminId?, action?, targetType?, from?, to? }
+
+--------------------------------------------------------------------------------
+18.11  BROADCAST
+--------------------------------------------------------------------------------
+
+  POST  /api/admin/broadcast                           (SUPER_ADMIN)
+    Body: { message, parseMode?: "HTML" | "Markdown" }
+    Notes: Queue via p-queue. Return immediately.
+    Response: { jobId, targetCount }
+
+--------------------------------------------------------------------------------
+18.12  SEASON MANAGEMENT
+--------------------------------------------------------------------------------
+
+  GET   /api/admin/seasons
+  POST  /api/admin/seasons                             (ADMIN+)
+    Body: { name, start, end }
+  PUT   /api/admin/seasons/:id                         (ADMIN+)
+  DELETE /api/admin/seasons/:id                        (SUPER_ADMIN)
+
+
+================================================================================
+SECTION 19: BACKGROUND JOBS & SCHEDULING
+================================================================================
+
+19.1  DAILY RESET JOB
+  Schedule: '0 0 * * *' (midnight UTC)
+  Actions:
+    - The daily combo puzzle becomes available for a new day.
+    - Daily login streak window advances.
+    - Update JobState table.
+
+19.2  SESSION CLEANUP JOB
+  Schedule: '*/15 * * * *' (every 15 minutes)
+  Actions:
+    - Find RideSessions where expiresAt < now AND status = ACTIVE → set EXPIRED.
+    - Delete expired ActiveBooster records.
+
+19.3  TOURNAMENT END JOB
+  Schedule: '*/5 * * * *' (every 5 minutes)
+  Actions:
+    - Find Tournaments where endAt < now AND isActive = true.
+    - Rank all TournamentEntry records by starsSpent descending.
+    - Assign rank values.
+    - Distribute rewards to top players.
+    - Set tournament.isActive = false.
+
+19.4  JOB STATE ENDPOINT
+
+  GET   /next-reset-time
+    Response: { nextResetAt, timeRemaining }
+
+
+================================================================================
+SECTION 20: SECURITY & HARDENING
+================================================================================
+
+20.1  Rate Limiting (@fastify/rate-limit):
+  - Global: 100 requests/minute per IP
+  - Auth: 10 requests/minute per IP
+  - Fishing sync: 30 requests/minute per user
+  - Game play (spin/roulette/ride): 20 requests/minute per user
+  - Withdrawals: 5 requests/minute per user
+  - Admin: 60 requests/minute per IP
+
+20.2  CORS:
+  - Allow only WEB_APP_URL origin.
+  - Allow credentials.
+
+20.3  Helmet:
+  - Enable all default security headers.
+
+20.4  Environment Validation (src/config/env.ts):
+  Use Zod to validate ALL environment variables at startup:
+
+    const envSchema = z.object({
+      DATABASE_URL: z.string().min(1),
+      PORT: z.coerce.number().default(8080),
+      BOT_TOKEN: z.string().min(1),
+      JWT_SECRET: z.string().min(32),
+      ADMIN_JWT_SECRET: z.string().min(32),
+      WEB_APP_URL: z.string().url(),
+      BOT_USERNAME: z.string().min(1),
+      HOT_WALLET_MNEMONIC: z.string().min(1),
+      TON_API_ENDPOINT: z.string().url(),
+      TON_API_TOKEN: z.string().min(1),
+      NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+      SUPPORT_LINK: z.string().url().optional(),
+      NEWS_CHANNEL: z.string().optional(),
+      FAQ_URL: z.string().url().optional(),
+    });
+
+  If validation fails, print missing/invalid variables and exit(1).
+
+20.5  Anti-Cheat (Bruno's Ride):
+  - Max coins/second cap from Settings.
+  - Session expiry (30 min).
+  - No duplicate active sessions.
+  - Flag + block cheaters.
+  - Log all flagged attempts.
+
+20.6  Withdrawal Security:
+  - Log IP on every withdrawal.
+  - Reject blocked users (check inside transaction).
+  - TON address format validation.
+  - Process via queue with concurrency=1.
+
+20.7  Transaction Safety:
+  Every multi-step mutation uses prisma.$transaction():
+    - Fishing collection
+    - Card upgrades + level recalculation + referral rewards
+    - Withdrawal creation
+    - Booster purchases
+    - Game plays (spin, roulette, ride)
+    - Task completion
+    - Daily combo submission
+    - Daily login claim
+    - Admin coin/star adjustments
+
+
+================================================================================
+SECTION 21: TESTING REQUIREMENTS
+================================================================================
+
+Unit Tests (no database):
+  - fishing.engine.ts: All pure functions, edge cases (§5.4)
+  - daily-combo.engine.ts: evaluateComboAnswer with all scoring combinations
+  - spin.engine.ts: Weighted prize selection statistical correctness
+  - cards.engine.ts: calculateUpgradeValues
+  - levelUtils.ts: calculateLevel with various inputs
+  - Login streak logic: consecutive days, missed days, cycle wrap
+
+Integration Tests (with test database):
+  - Auth flow: initData → JWT → authenticated request
+  - Fishing lifecycle: start → sync → collect
+  - Fishing with booster: verify 1.5x rate and auto-restart
+  - Card upgrade: purchase → verify value change → verify level change
+  - Referral flow: register with ref → level up → referrer rewarded
+  - Withdrawal flow: create → verify deduction → verify record
+  - Spin game: play → verify star deduction → verify rewards
+  - Daily combo: submit correct/partial/wrong answers
+  - Daily login: consecutive claims, missed day reset, Day 10 cycle
+  - Admin: login → CRUD → verify audit log
+  - Task completion: channel join verification
+
+Configure vitest:
+  - Separate test database (DATABASE_URL override)
+  - Database reset between test suites
+  - Test factories for users, sessions, etc.
+  - Target ≥80% coverage on service + engine files.
+
+
+================================================================================
+SECTION 22: API DOCUMENTATION
+================================================================================
+
+Set up @fastify/swagger + @fastify/swagger-ui.
+
+  - Serve Swagger UI at GET /api/docs (development only).
+  - Export OpenAPI JSON at GET /api/docs/json.
+  - Group endpoints by tag: auth, fishing, user, shop, games, tasks,
+    friends, daily-combo, daily-activity, withdrawals, stars, tournaments,
+    admin.
+  - Include request/response examples.
+  - Document error response schemas.
+
+
+================================================================================
+SECTION 23: SEED SCRIPT
+================================================================================
+
+File: prisma/seed.ts
+
+Must create (idempotent via upsert):
+
+  1. Settings singleton (id=1) with all default values:
+     - cardUpgradeValues: 13 levels for both cards (see §8.1)
+     - boosterPrices: prices and durations for both boosters
+     - spinTiers: 5 tiers with prizes
+     - roulettePrizes: default prize pool
+     - comboRewards: { 4: 100, 3: 75, 2: 50, 1: 25 }
+     - loginStreakRewards: { 1: 5, 2: 10, ..., 10: 150 }
+     - referralRewards: { 2: 200, ..., 13: 1050000 }
+     - Economy defaults
+
+  2. One SUPER_ADMIN (username: "admin", password: bcrypt("changeme"))
+
+  3. Default CardUpgradeRequirement records for levels 1–13 of both cards.
+
+  4. Default Tasks (a few sample channel join + invite friends tasks).
+
+  5. Today's DailyCombo (random valid combo).
+
+  6. One sample Tournament.
+
+  Configure: "prisma": { "seed": "tsx prisma/seed.ts" }
+
+
+================================================================================
+SECTION 24: CONFIGURATION FILES
+================================================================================
+
+Create these files:
+
+  .env.example         — All variables with placeholder values (no secrets)
+  tsconfig.json        — Strict TS, ES modules, paths
+  package.json         — Dependencies, scripts:
+                         dev, build, start, test, test:coverage,
+                         db:migrate, db:seed, db:studio, lint, format
+  eslint.config.js     — Flat config, @typescript-eslint
+  .prettierrc          — Consistent formatting
+  .gitignore           — node_modules, dist, .env, *.db
+  prisma/schema.prisma — Full schema (see §3)
+  vitest.config.ts     — Test configuration with setup file
+
+
+================================================================================
+SECTION 25: STARTUP & GRACEFUL SHUTDOWN
+================================================================================
+
+Startup sequence:
+  1. Validate environment variables (exit if invalid).
+  2. Connect Prisma client.
+  3. Load and validate Settings from database (fail if missing → run seed).
+  4. Register Fastify plugins (cors, helmet, rate-limit, swagger, auth).
+  5. Register all route modules.
+  6. Start Telegram bot (polling or webhook based on NODE_ENV).
+  7. Start cron jobs.
+  8. Listen on PORT.
+  9. Log: "Server started on port {PORT}" with pino.
+
+Graceful shutdown (SIGINT, SIGTERM):
+  1. Stop accepting new HTTP requests.
+  2. Stop Telegram bot.
+  3. Stop cron jobs.
+  4. Wait for in-flight requests (timeout: 10s).
+  5. Disconnect Prisma client.
+  6. Exit process.
+
+
+================================================================================
+SECTION 26: IMPLEMENTATION ORDER
+================================================================================
+
+Build in this exact order. Each phase builds on the previous.
+
+Phase 1 — Foundation
+  1.  package.json, tsconfig, eslint, prettier, .gitignore
+  2.  Prisma schema (all models, enums, indexes) + first migration
+  3.  Seed script
+  4.  src/config/env.ts (Zod validation)
+  5.  src/config/constants.ts
+  6.  src/prisma.ts (singleton)
+  7.  src/app.ts (Fastify + plugins: cors, helmet, rate-limit, swagger)
+  8.  src/lib/errors.ts (custom error classes + global handler)
+  9.  src/plugins/settings.ts (SettingsService with cache)
+
+Phase 2 — Authentication
+  10. src/lib/telegram.ts (init data verification)
+  11. src/modules/auth/* (routes, service, schema)
+  12. src/plugins/auth.ts (user JWT middleware)
+  13. src/plugins/adminAuth.ts (admin JWT + role middleware)
+  14. src/modules/admin/admin-auth.* (routes, service)
+  15. Auth tests
+
+Phase 3 — Core Fishing
+  16. src/modules/fishing/fishing.engine.ts (pure functions) + tests
+  17. src/modules/fishing/fishing.service.ts
+  18. src/modules/fishing/fishing.routes.ts
+  19. src/modules/user/* (profile, settings)
+  20. Fishing integration tests
+
+Phase 4 — Shop
+  21. src/modules/shop/cards/cards.engine.ts + tests
+  22. src/modules/shop/cards/* (service, routes)
+  23. src/lib/levelUtils.ts + src/lib/referralReward.ts
+  24. src/modules/shop/boosters/* (service, routes)
+  25. Shop integration tests
+
+Phase 5 — Daily Systems
+  26. src/modules/daily-combo/daily-combo.engine.ts + tests
+  27. src/modules/daily-combo/* (service, routes)
+  28. src/modules/daily-activity/* (service, routes)
+  29. Daily systems integration tests
+
+Phase 6 — Games
+  30. src/lib/selectPrize.ts (generic weighted selection)
+  31. src/modules/games/spin/* (engine, service, routes)
+  32. src/modules/games/roulette/* (engine, service, routes)
+  33. src/modules/games/brunos-ride/* (service, routes, anti-cheat)
+  34. Games integration tests
+
+Phase 7 — Economy & Social
+  35. src/services/tonService.ts
+  36. src/modules/withdrawals/* (service, routes)
+  37. src/modules/stars/* (balance, invoices, top-up)
+  38. src/modules/friends/* (referral link, stats, list)
+  39. src/modules/tasks/* (channel join, invite friends)
+  40. Economy integration tests
+
+Phase 8 — Supporting Features
+  41. src/modules/leaderboard/* (tournament leaderboard)
+  42. src/bot/* (commands, payments, subscription checks)
+  43. src/jobs/* (daily reset, session cleanup, tournament end)
+
+Phase 9 — Admin Panel
+  44. admin-users (CRUD, block, adjust coins/stars)
+  45. admin-game (settings CRUD with validation)
+  46. admin-economy (withdrawals approve/reject, stats)
+  47. admin-content (tasks, daily-combo, tournaments, card requirements)
+  48. admin-analytics (overview, registrations, economy, games, referrals)
+  49. admin audit log + broadcast
+  50. Admin integration tests
+
+Phase 10 — Polish
+  51. Verify all Swagger docs are complete
+  52. Run full test suite, fix failures
+  53. Create .env.example
+  54. Verify graceful shutdown
+  55. Final security review
+
+
+================================================================================
+SECTION 27: QUALITY CHECKLIST
+================================================================================
+
+Before considering the project complete, verify ALL of the following:
+
+  CORE FEATURES
+  [ ] Fishing lifecycle works: start → sync → collect → auto-restart (with booster)
+  [ ] Coin Capacity Tank fills over 1 hour at miningRate
+  [ ] Boosters (1.5x mining, auto-mining) work correctly
+  [ ] Card upgrades (COIN_CAPACITY, MINING_RATE) with requirements
+  [ ] Level = min(coinCapacityLevel, miningRateLevel), 13 max
+  [ ] Daily Combo: 8 items, pick 4 in order, scored 0–4, one attempt/day
+  [ ] Daily Login Streak: 10-day cycle, resets on miss, rewards correct
+  [ ] Referral system: invite link, rewards on level-up, stats, friend list
+
+  GAMES
+  [ ] Spin: 5 tiers, 1x/3x/5x/10x spins, weighted prizes, stars cost
+  [ ] Roulette: play → weighted prize → reward applied
+  [ ] Bruno's Ride: start → play → claim with anti-cheat (max coins/sec)
+  [ ] Live wins feed for Spin and Roulette
+  [ ] All games deduct from starsBalance, not coins
+  [ ] Tournament starsSpent tracking on every game play
+
+  ECONOMY
+  [ ] Withdrawal: 100K coins = 1 TON, min/max limits, fee display
+  [ ] Withdrawal transaction safety (no race conditions)
+  [ ] TON service queued with concurrency=1
+  [ ] Stars balance: top-up via Telegram Stars and TON (+10% bonus)
+
+  TASKS
+  [ ] Channel join tasks with bot verification
+  [ ] Invite friends tasks with count check
+  [ ] MAIN and OTHER categories
+  [ ] Tasks fully admin-managed (CRUD)
+
+  ADMIN PANEL (50+ endpoints)
+  [ ] 3-tier role system (MODERATOR, ADMIN, SUPER_ADMIN) enforced
+  [ ] User management: search, paginate, block, unblock, adjust coins/stars
+  [ ] Settings management: all game params editable with validation
+  [ ] Withdrawal management: approve, reject (with refund), stats
+  [ ] Task CRUD
+  [ ] Daily combo CRUD (single + bulk)
+  [ ] Tournament CRUD + manual finalize
+  [ ] Card requirement CRUD
+  [ ] Analytics: overview, registrations, economy, games, referrals
+  [ ] Audit log for all admin mutations
+  [ ] Broadcast messaging (queued)
+
+  ARCHITECTURE
+  [ ] Fastify 5.x (NOT Express)
+  [ ] Prisma latest stable (NOT pinned to v6)
+  [ ] PostgreSQL (NOT SQLite)
+  [ ] All enums defined in Prisma schema
+  [ ] All indexes from §3.2 present
+  [ ] Every endpoint validates input with Zod
+  [ ] Every multi-step mutation uses prisma.$transaction()
+  [ ] Pure engine functions have comprehensive unit tests
+  [ ] Services contain business logic, routes are thin
+  [ ] No hardcoded game values in route/service files
+  [ ] Settings loaded from DB with 60-second cache
+
+  SECURITY
+  [ ] Rate limiting configured per §20.1
+  [ ] Environment validation fails fast
+  [ ] CORS restricted to WEB_APP_URL
+  [ ] Helmet security headers enabled
+  [ ] Blocked users rejected at auth middleware
+  [ ] Anti-cheat flags and blocks cheaters
+
+  INFRASTRUCTURE
+  [ ] Swagger UI at /api/docs
+  [ ] Graceful shutdown (SIGINT/SIGTERM)
+  [ ] Cron jobs: daily reset, session cleanup, tournament end
+  [ ] Bot: /start, /help, payment callbacks
+  [ ] Seed script: Settings, Admin, sample data
+  [ ] All tests pass with ≥80% coverage on services/engines
+  [ ] .env.example with all required variables
+  [ ] No any types except where strictly necessary for JSON
+
+
+================================================================================
+END OF BUILD INSTRUCTIONS V2
+================================================================================

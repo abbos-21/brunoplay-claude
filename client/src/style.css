@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+:root {
+  /* Primary palette - warm gold/brown */
+  --color-gold: #FBE166;
+  --color-gold-dark: #C17E23;
+  --color-brown: #552A0F;
+  --color-brown-outline: #532B23;
+  --color-orange: #FB7A38;
+  --color-orange-gradient-start: #FDA109;
+  --color-orange-gradient-end: #F96A07;
+  --color-card-bg: #FDE7B8;
+  --color-card-border: #CF8741;
+  --color-text-dark: #552A0F;
+  --color-text-red: #890D00;
+  --color-text-red-deep: #410200;
+
+  /* Functional colors */
+  --color-success: #0FFF00;
+  --color-success-dark: #1C8B1A;
+  --color-success-border: #006417;
+  --color-danger: #ef4444;
+  --color-cyan: #00d4ff;
+  --color-text: #ffffff;
+  --color-text-muted: #8B7355;
+
+  /* Outline variable for text-shadow */
+  --outline: #532B23;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--color-text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  user-select: none;
+  background: #1a0f05;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Outlined text with brown text-shadow stroke */
+.outlined {
+  color: white;
+  text-shadow:
+    -1px -1px 0 var(--outline),
+    1px -1px 0 var(--outline),
+    -1px 1px 0 var(--outline),
+    1px 1px 0 var(--outline);
+}
+
+/* Gold pill - reusable for coin display, nav bar, etc. */
+.gold-pill {
+  background: #FBE166;
+  box-shadow:
+    0px 4px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 0px 4px 2px rgba(0, 0, 0, 0.25);
+  border-radius: 50px;
+}
+
+/* Gold inner pill (value display) */
+.gold-pill-inner {
+  background: #C17E23;
+  box-shadow:
+    inset 0px 0px 1px 1px rgba(0, 0, 0, 0.25),
+    inset 0px 0px 1px 1px rgba(0, 0, 0, 0.25);
+  border-radius: 50px;
+}
+
+/* Green badge (subtract/add icon) */
+.green-badge {
+  background: linear-gradient(192.38deg, #0FFF00 6.75%, #1C8B1A 86.84%);
+  border: 0.5px solid #006417;
+  box-shadow:
+    0px 4px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 0px 9px 2px rgba(205, 205, 205, 0.25);
+}
+
+/* Orange button (close, info) */
+.orange-button {
+  background: #FB7A38;
+  box-shadow:
+    inset 0px -3px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 1px 0px rgba(255, 255, 255, 0.25);
+}
+
+/* Upgrade/orange gradient button */
+.upgrade-button-style {
+  background: linear-gradient(360deg, #FDA109 0%, #F96A07 100%);
+  border: 2px solid #C66A27;
+  box-shadow:
+    inset 0px -2px 2px #FFE120,
+    inset 0px 2px 2px #FFE120;
+  border-radius: 16px;
+}
+
+/* Fishing button */
+.fishing-button-style {
+  background: #FBE166;
+  border: 1px solid #552A0F;
+  box-shadow: inset 0px -3px 4px #935324;
+  border-radius: 12px;
+}
+
+/* Card/shop element */
+.shop-card {
+  background: #FDE7B8;
+  border: 8px solid #CF8741;
+  box-shadow:
+    0px 4px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 0px 4px 2px rgba(0, 0, 0, 0.25);
+  border-radius: 32px;
+}
+
+/* Level badge on cards */
+.level-badge {
+  background: linear-gradient(360deg, #FDA109 0%, #F96A07 100%);
+  border: 1px solid #C66A27;
+  box-shadow:
+    inset 0px -2px 2px #FFE120,
+    inset 0px 2px 2px #FFE120;
+  border-radius: 16px;
+  color: #410200;
+}
+
+/* Tab navigation button (inactive) */
+.tab-button {
+  background: #FDE7B8;
+  border: 1px solid #C17E23;
+  box-shadow:
+    0px 4px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 4px 4px rgba(255, 255, 255, 0.25),
+    inset 0px -4px 4px rgba(0, 0, 0, 0.25);
+  border-radius: 16px;
+  color: #552A0F;
+  font-weight: bold;
+}
+
+/* Tab navigation button (active) */
+.tab-button-active {
+  background: #C17E23;
+  border: 1px solid #C17E23;
+  box-shadow:
+    0px 4px 4px rgba(0, 0, 0, 0.25),
+    inset 0px 4px 4px rgba(255, 255, 255, 0.25),
+    inset 0px -4px 4px rgba(0, 0, 0, 0.25);
+  border-radius: 16px;
+  color: white;
+  font-weight: bold;
+}
+
+/* Game container with background image support */
+.bg-home {
+  background-image: url('/src/assets/backgrounds/home.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.bg-shop {
+  background-image: url('/src/assets/backgrounds/shop.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Scrollbar hiding */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(251, 225, 102, 0.3); }
+  50% { box-shadow: 0 0 24px rgba(251, 225, 102, 0.6); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
